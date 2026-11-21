@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#080b16">
+  <meta name="description" content="Quantum — private, local-first AI running in your browser.">
+  <title>Quantum — Local AI</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">Q</div><div><strong>QUANTUM</strong><small>LOCAL INTELLIGENCE</small></div></div>
+      <button id="new-chat" class="new-chat"><span>＋</span> New conversation</button>
+      <div class="side-label">WORKSPACE</div>
+      <button class="nav-item active"><span>◈</span> Chat</button>
+      <button class="nav-item" id="open-memory"><span>⌁</span> Local memory</button>
+      <button class="nav-item" id="open-system"><span>⌘</span> System monitor</button>
+      <div class="sidebar-bottom">
+        <div class="privacy-card"><span class="privacy-dot"></span><div><b>Private by design</b><small>Your chats stay on this device.</small></div></div>
+        <div class="version">QUANTUM CORE · EARLY ACCESS</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="mobile-brand"><div class="brand-mark">Q</div><b>QUANTUM</b></div>
+        <div class="model-status"><span class="status-dot" id="status-dot"></span><span id="status-label">Engine not loaded</span></div>
+        <button class="icon-button" id="settings-button" aria-label="Settings">⚙</button>
+      </header>
+
+      <section class="welcome" id="welcome">
+        <div class="eyebrow"><span class="pulse"></span> YOUR PERSONAL AI · RUNNING LOCALLY</div>
+        <h1>Think beyond<br><span>the ordinary.</span></h1>
+        <p>Quantum runs its language model directly on your device. Your conversations remain yours.</p>
+        <div class="welcome-actions">
+          <button class="primary-button" id="load-model">Initialize Quantum <span>→</span></button>
+          <span class="load-note" id="load-note">Model download required on first launch · ~0.9 GB VRAM estimate</span>
+        </div>
+        <div class="suggestions">
+          <button class="suggestion" data-prompt="Explain how quantum computing works in simple terms."><span>✳</span><b>Explain something</b><small>Make a complex idea simple</small></button>
+          <button class="suggestion" data-prompt="Help me plan a creative project from scratch."><span>⌘</span><b>Build an idea</b><small>Turn a thought into a plan</small></button>
+          <button class="suggestion" data-prompt="Give me three interesting things to learn today."><span>◇</span><b>Explore</b><small>Discover something new</small></button>
+        </div>
+      </section>
+
+      <section class="chat-area hidden" id="chat-area">
+        <div id="messages" class="messages"></div>
+      </section>
+
+      <section class="composer-wrap">
+        <div class="engine-banner" id="engine-banner"><span class="mini-spinner"></span><span id="engine-message">Quantum is preparing…</span></div>
+        <form id="chat-form" class="composer">
+          <textarea id="prompt" rows="1" placeholder="Message Quantum…" aria-label="Message Quantum" disabled></textarea>
+          <div class="composer-footer"><span><span class="lock-icon">⌑</span> Processed on this device</span><button id="send-button" type="submit" disabled aria-label="Send message">↑</button></div>
+        </form>
+        <div class="disclaimer">AI can make mistakes. Verify important information.</div>
+      </section>
+    </main>
+
+    <aside class="inspector">
+      <div class="inspector-head"><span>LIVE SYSTEM</span><span class="live-tag">LIVE</span></div>
+      <div class="system-card"><div class="system-title">COMPUTE ENGINE</div><div class="system-value" id="gpu-value">Checking…</div><div class="system-sub" id="gpu-sub">Detecting browser capabilities</div></div>
+      <div class="system-card"><div class="system-title">DEVICE MEMORY</div><div class="system-value" id="ram-value">—</div><div class="system-sub">Browser-reported estimate</div></div>
+      <div class="system-card"><div class="system-title">LOCAL STORAGE</div><div class="system-value" id="storage-value">Checking…</div><div class="system-sub" id="storage-sub">IndexedDB + model cache</div></div>
+      <div class="system-card model-card"><div class="system-title">ACTIVE MODEL</div><div class="model-name">Llama 3.2 <span>1B</span></div><div class="system-sub">Instruct · 4-bit quantized</div><div class="model-chip">WEBGPU BUILD</div></div>
+      <div class="inspector-foot"><span class="privacy-dot"></span> No cloud inference</div>
+    </aside>
+  </div>
+  <dialog id="info-dialog"><div class="dialog-head"><b id="dialog-title">Quantum</b><button id="dialog-close" class="icon-button">✕</button></div><div id="dialog-content" class="dialog-content"></div></dialog>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>

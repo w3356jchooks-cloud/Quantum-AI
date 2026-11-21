@@ -110,7 +110,7 @@ function initialize() {
     busyState(true, "Starting local model runtime…");
     status("Preparing model");
     try {
-        worker = new Worker(new URL("./engine.worker.js", import.meta.url), { type: "module" });
+        worker = new Worker(new URL("./engine.worker.js?v=cpu-wasm-ts1", import.meta.url), { type: "module" });
         worker.onmessage = (event) => {
             const m = event.data;
             if (m.type === "progress")

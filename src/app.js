@@ -5,6 +5,7 @@ const DB_NAME = "quantum-local";
 const DB_VERSION = 1;
 let engine = null;
 let busy = false;
+let pendingPrompt = null;
 let history = [{ role: "system", content: "You are Quantum, a helpful, thoughtful AI assistant. Be clear, accurate, and honest about uncertainty. Do not claim to access information or perform actions you cannot." }];
 
 const $ = (id) => document.getElementById(id);
@@ -173,9 +174,13 @@ async function initializeEngine() {
     ui.send.disabled = false;
     ui.prompt.focus();
     showBanner("Quantum is ready. Inference runs locally on your GPU.");
-    setTimeout(() => ui.banner.classList.remove("visible"), 3500);
+    const queuedPrompt = pendingPrompt;
+    pendingPrompt = null;
+    if (queuedPrompt) await sendMessage(queuedPrompt);
+    else setTimeout(() => ui.banner.classList.remove("visible"), 3500);
   } catch (error) {
     engine = null;
+    pendingPrompt = null;
     setStatus("Engine unavailable");
     setBusy(false);
     showBanner("Initialization failed: " + (error?.message || String(error)));
@@ -270,10 +275,17 @@ $("open-memory").addEventListener("click", async () => {
   showDialog("Local memory", `Saved conversations: <b>${rows.length}</b><br>Knowledge records: <b>${knowledge.length}</b><br><br>Conversation records are stored in this browser's IndexedDB. No sync or cloud backup is configured.`);
 });
 $("open-system").addEventListener("click", () => showDialog("System monitor", `GPU: <b>${$("gpu-value").textContent}</b><br>GPU details: ${$("gpu-sub").textContent}<br>Memory: <b>${$("ram-value").textContent}</b><br>Storage: <b>${$("storage-value").textContent}</b><br><br>Browsers do not expose reliable total/free VRAM or device temperature. Quantum will not invent those measurements.`));
-document.querySelectorAll(".suggestion").forEach(button => button.addEventListener("click", () => {
-  if (!engine) { showBanner("Initialize Quantum first, then choose a prompt."); ui.load.focus(); return; }
-  sendMessage(button.dataset.prompt);
+document.querySelectorAll(".suggestion").forEach(button => button.addEventListener("click", async () => {
+  const prompt = button.dataset.prompt;
+  if (busy) { showBanner("Quantum is busy. Please wait for the current task to finish."); return; }
+  if (!engine) { pendingPrompt = prompt; await initializeEngine(); return; }
+  await sendMessage(prompt);
 }));
+
+$("open-chat").addEventListener("click", () => {
+  if (savedMessages.length) { ui.welcome.classList.add("hidden"); ui.chat.classList.remove("hidden"); }
+  else { ui.chat.classList.add("hidden"); ui.welcome.classList.remove("hidden"); }
+});
 
 await detectSystem();
 await loadLatestConversation();

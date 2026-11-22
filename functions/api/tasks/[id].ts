@@ -1,4 +1,4 @@
-import { Env, json, requireSession } from "../../_shared";
+import { Env, json, requireSession } from "../../_shared.js";
 interface Context { request: Request; env: Env; params: { id: string }; }
 export async function onRequestGet({ request, env, params }: Context): Promise<Response> {
   const denied = await requireSession(request, env); if (denied) return denied;

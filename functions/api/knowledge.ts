@@ -1,4 +1,4 @@
-import { Env, json, requireSession, parseJsonBody } from "./_shared.js";
+import { Env, json, requireSession, parseJsonBody } from "../_shared.js";
 import { acquireWikipedia } from "../_knowledge.js";
 interface Context { request: Request; env: Env; }
 interface Body { query?: unknown; }

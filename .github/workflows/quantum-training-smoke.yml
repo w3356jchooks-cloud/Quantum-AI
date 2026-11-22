@@ -25,8 +25,8 @@ jobs:
         working-directory: llama.cpp
         run: |
           set -euo pipefail
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_UI=OFF
-          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-perplexity -j2
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF
+          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-perplexity llama-server -j2
       - name: Acquire the FP16 training model without Hugging Face
         shell: bash
         run: |
@@ -44,6 +44,10 @@ jobs:
           test -s "$MODEL_PATH"
           mkdir -p training-test
           cp "$MODEL_PATH" training-test/smollm2-135m-instruct-f16.gguf
+          ollama show --modelfile smollm2:135m-instruct-q8_0 > /tmp/Quantum-Q8.Modelfile
+          Q8_MODEL_PATH=$(awk '/^FROM / {print $2; exit}' /tmp/Quantum-Q8.Modelfile)
+          test -s "$Q8_MODEL_PATH"
+          cp "$Q8_MODEL_PATH" training-test/smollm2-135m-instruct-q8.gguf
       - name: Prepare tiny synthetic training and evaluation data
         run: |
           mkdir -p training-test
@@ -78,22 +82,28 @@ jobs:
           build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 512 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
-          cat > "$GITHUB_WORKSPACE/training-test/Modelfile" <<EOF
-          FROM smollm2:135m-instruct-q8_0
-          ADAPTER $GITHUB_WORKSPACE/training-test/adapter-resumed.gguf
-          EOF
-          ollama create quantum-lora-smoke -f "$GITHUB_WORKSPACE/training-test/Modelfile"
+          MODEL_Q8="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-q8.gguf"
+          build/bin/llama-server -m "$MODEL_Q8" --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf" -c 8192 -t 4 --host 127.0.0.1 --port 8080 > "$GITHUB_WORKSPACE/training-test/llama-server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8080/health >/dev/null
           python3 - <<'PY'
           import json, urllib.request
-          payload=json.dumps({"model":"quantum-lora-smoke","messages":[{"role":"user","content":"Reply with a short greeting."}],"stream":False,"options":{"num_predict":48}}).encode()
-          req=urllib.request.Request("http://127.0.0.1:11434/api/chat",data=payload,headers={"Content-Type":"application/json"},method="POST")
+          payload=json.dumps({"model":"smollm2","messages":[{"role":"user","content":"Reply with a short greeting."}],"max_tokens":48,"temperature":0.7}).encode()
+          req=urllib.request.Request("http://127.0.0.1:8080/v1/chat/completions",data=payload,headers={"Content-Type":"application/json"},method="POST")
           with urllib.request.urlopen(req,timeout=600) as response:
               result=json.loads(response.read())
-          answer=result.get("message",{}).get("content","").strip()
-          if not answer: raise SystemExit("LoRA-enabled Ollama model returned an empty response")
-          print("PASS: Ollama loaded the trained GGUF adapter on the Q8 inference model.")
+          answer=result.get("choices",[{}])[0].get("message",{}).get("content","").strip()
+          if not answer: raise SystemExit("LoRA-enabled llama.cpp server returned an empty response")
+          print("PASS: llama.cpp server loaded the trained GGUF adapter on the Q8 inference model.")
           print(answer)
           PY
+          kill "$SERVER_PID" 2>/dev/null || true
+          trap - EXIT
       - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
         working-directory: llama.cpp
         run: |

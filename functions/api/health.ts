@@ -1,4 +1,4 @@
-import { Env, json } from "../_shared";
+import { Env, json } from "../_shared.js";
 interface Context { env: Env; }
 export async function onRequestGet({ env }: Context): Promise<Response> {
   const authConfigured = !!(env.APP_ACCESS_CODE && env.APP_ACCESS_CODE.length >= 20 && env.SESSION_SECRET && env.SESSION_SECRET.length >= 32 && env.INTERNAL_API_SECRET && env.INTERNAL_API_SECRET.length >= 32);

@@ -27,7 +27,7 @@ jobs:
           set -euo pipefail
           test -n "$APP_ACCESS_CODE"
           health=$(curl -fsS "$QUANTUM_API_URL/api/health")
-          jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true' <<<"$health" >/dev/null
+          jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true and .artifactsConfigured == true' <<<"$health" >/dev/null
       - name: Authenticate and run one real chat through GitHub Actions
         shell: bash
         run: |

@@ -70,8 +70,8 @@ jobs:
         shell: bash
         env:
           TASK_ID: ${{ inputs.task_id }}
-          QUANTUM_API_URL: ${{ secrets.QUANTUM_API_URL }}
-          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.QUANTUM_INTERNAL_API_SECRET }}
+          QUANTUM_API_URL: https://quantum-ai-w3356jchooks.pages.dev
+          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
           if [ -n "$QUANTUM_API_URL" ] && [ -n "$QUANTUM_INTERNAL_API_SECRET" ]; then
             payload=$(jq -n --arg taskId "$TASK_ID" --arg status "failed" --arg error "The GitHub Actions inference job failed. Check its run logs." '{taskId:$taskId,status:$status,error:$error}')

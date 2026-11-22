@@ -1,0 +1,5 @@
+# Cloudflare Pages configuration for Quantum.
+# D1/R2 bindings will be added after resources are provisioned in the target account.
+name = "quantum-ai"
+pages_build_output_dir = "."
+compatibility_date = "2026-11-22"

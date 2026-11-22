@@ -1,4 +1,4 @@
-import { Env, json, issueSession, safeEqual, parseJsonBody } from "../_shared";
+import { Env, json, issueSession, safeEqual, parseJsonBody } from "../_shared.js";
 interface Context { request: Request; env: Env; }
 export async function onRequestPost({ request, env }: Context): Promise<Response> {
   if (!env.DB || !env.APP_ACCESS_CODE || env.APP_ACCESS_CODE.length < 20 || !env.SESSION_SECRET || env.SESSION_SECRET.length < 32) return json({ error: "Quantum authentication is not configured yet." }, 503);

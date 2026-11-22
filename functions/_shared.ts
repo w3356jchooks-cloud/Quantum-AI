@@ -47,7 +47,7 @@ export async function issueSession(secret: string): Promise<string> {
 export async function requireSession(request: Request, env: Env): Promise<Response | null> {
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
   const parts = token.split(".");
-  if (parts.length !== 2 || !env.SESSION_SECRET) return json({ error: "Authentication required." }, 401);
+  if (parts.length !== 2 || !env.SESSION_SECRET || env.SESSION_SECRET.length < 32) return json({ error: "Authentication required." }, 401);
   try {
     const valid = await crypto.subtle.verify("HMAC", await hmacKey(env.SESSION_SECRET), decodeB64url(parts[1]), encoder.encode(parts[0]));
     const payload = JSON.parse(new TextDecoder().decode(decodeB64url(parts[0]))) as { sub?: string; exp?: number };
@@ -57,7 +57,7 @@ export async function requireSession(request: Request, env: Env): Promise<Respon
 }
 export function requireInternal(request: Request, env: Env): Response | null {
   const supplied = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
-  if (!env.INTERNAL_API_SECRET || !safeEqual(supplied, env.INTERNAL_API_SECRET)) return json({ error: "Forbidden." }, 403);
+  if (!env.INTERNAL_API_SECRET || env.INTERNAL_API_SECRET.length < 32 || !safeEqual(supplied, env.INTERNAL_API_SECRET)) return json({ error: "Forbidden." }, 403);
   return null;
 }
 function derLength(length: number): Uint8Array {
@@ -108,8 +108,25 @@ export async function dispatchInference(env: Env, taskId: string): Promise<void>
   });
   if (!response.ok) throw new Error("GitHub could not queue the inference job (" + response.status + ").");
 }
-export function parseJsonBody<T>(request: Request): Promise<T> {
-  const length = Number(request.headers.get("content-length") || "0");
-  if (length > 48_000) throw new Error("Request is too large.");
-  return request.json() as Promise<T>;
+export async function parseJsonBody<T>(request: Request, maxBytes = 48_000): Promise<T> {
+  const declared = Number(request.headers.get("content-length") || "0");
+  if (declared > maxBytes) throw new Error("Request is too large.");
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error("Request body is missing.");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    total += part.value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error("Request is too large.");
+    }
+    chunks.push(part.value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return JSON.parse(new TextDecoder().decode(bytes)) as T;
 }

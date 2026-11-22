@@ -1,0 +1,79 @@
+name: Quantum training feasibility test
+on:
+  push:
+    branches: [quantum-cloud-migration]
+    paths:
+      - ".github/workflows/quantum-training-smoke.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  training-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out pinned llama.cpp CPU LoRA training revision
+        uses: actions/checkout@v4
+        with:
+          repository: gianni-cor/llama.cpp
+          ref: 8544d434e0608b5e37f3620afd79026a8a438966
+          path: llama.cpp
+      - name: Build CPU training and inference binaries
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF
+          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-cli -j2
+      - name: Acquire the FP16 training model without Hugging Face
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve >/tmp/ollama-training.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          ollama pull smollm2:135m-instruct-fp16
+          ollama show --modelfile smollm2:135m-instruct-fp16 > /tmp/Quantum.Modelfile
+          MODEL_PATH=$(awk '/^FROM / {print $2; exit}' /tmp/Quantum.Modelfile)
+          test -s "$MODEL_PATH"
+          mkdir -p training-test
+          cp "$MODEL_PATH" training-test/smollm2-135m-instruct-f16.gguf
+      - name: Prepare tiny synthetic training and evaluation data
+        run: |
+          mkdir -p training-test
+          cat > training-test/train.jsonl <<'JSONL'
+          {"messages":[{"role":"user","content":"What is 2 plus 2?"},{"role":"assistant","content":"2 plus 2 equals 4."}]}
+          {"messages":[{"role":"user","content":"What is the capital of France?"},{"role":"assistant","content":"Paris is the capital of France."}]}
+          {"messages":[{"role":"user","content":"What color is a clear daytime sky?"},{"role":"assistant","content":"A clear daytime sky usually appears blue."}]}
+          {"messages":[{"role":"user","content":"How many days are in a standard week?"},{"role":"assistant","content":"A standard week has seven days."}]}
+          JSONL
+          cat > training-test/train.txt <<'TEXT'
+          Two plus two equals four.
+          Paris is the capital of France.
+          A clear daytime sky usually appears blue.
+          A standard week has seven days.
+          TEXT
+      - name: Run LoRA fine-tuning, checkpoint, resume, and adapter load
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          MODEL="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-f16.gguf"
+          DATA="$GITHUB_WORKSPACE/training-test/train.jsonl"
+          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --checkpoint-save-steps 1 --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints" -o "$GITHUB_WORKSPACE/training-test/adapter.gguf"
+          test -s "$GITHUB_WORKSPACE/training-test/adapter.gguf"
+          find "$GITHUB_WORKSPACE/training-test/checkpoints" -maxdepth 2 -type f -print
+          CHECKPOINT=$(find "$GITHUB_WORKSPACE/training-test/checkpoints" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
+          test -n "$CHECKPOINT"
+          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          build/bin/llama-cli -m "$MODEL" --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf" -p "What is 2 plus 2?" -n 32 -t 4
+      - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          MODEL="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-f16.gguf"
+          DATA="$GITHUB_WORKSPACE/training-test/train.txt"
+          build/bin/llama-finetune -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 -epochs 1 -lr 0.00001 -o "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"
+          test -s "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"

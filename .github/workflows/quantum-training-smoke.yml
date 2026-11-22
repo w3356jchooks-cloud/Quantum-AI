@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: quantum-training-smoke
+  cancel-in-progress: true
 jobs:
   training-smoke:
     runs-on: ubuntu-latest

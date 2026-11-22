@@ -1,0 +1,64 @@
+name: Quantum end-to-end acceptance test
+on:
+  workflow_run:
+    workflows: ["Bootstrap and deploy Quantum on Cloudflare"]
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      QUANTUM_API_URL: https://quantum-ai-w3356jchooks.pages.dev
+      APP_ACCESS_CODE: ${{ secrets.APP_ACCESS_CODE }}
+    steps:
+      - name: Verify deployed gateway readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$APP_ACCESS_CODE"
+          health=$(curl -fsS "$QUANTUM_API_URL/api/health")
+          jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true' <<<"$health" >/dev/null
+      - name: Authenticate and run one real chat through GitHub Actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth=$(curl -fsS -X POST "$QUANTUM_API_URL/api/auth" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n --arg code "$APP_ACCESS_CODE" '{accessCode:$code}')")
+          token=$(jq -r '.token // empty' <<<"$auth")
+          test -n "$token"
+          echo "::add-mask::$token"
+          conversation_id=$(cat /proc/sys/kernel/random/uuid)
+          chat=$(curl -fsS -X POST "$QUANTUM_API_URL/api/chat" \
+            -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+            --data "$(jq -n --arg id "$conversation_id" '{conversationId:$id,messages:[{role:"user",content:"Explain quantum mechanics in one concise paragraph."}]}')")
+          task_id=$(jq -r '.taskId // empty' <<<"$chat")
+          test -n "$task_id"
+          source_count=$(jq -r '.knowledgeSources | length' <<<"$chat")
+          test "$source_count" -gt 0
+          echo "Dispatched real inference task $task_id with $source_count acquired reference(s)."
+          for attempt in $(seq 1 900); do
+            task=$(curl -fsS "$QUANTUM_API_URL/api/tasks/$task_id" -H "Authorization: Bearer $token")
+            status=$(jq -r '.status' <<<"$task")
+            if [ "$status" = "complete" ]; then break; fi
+            if [ "$status" = "failed" ]; then
+              jq -r '.error // "Inference failed."' <<<"$task"
+              exit 1
+            fi
+            sleep 2
+          done
+          test "$status" = "complete"
+          answer=$(jq -r '.answer // empty' <<<"$task")
+          test -n "$answer"
+          task_sources=$(jq -r '.sources | length' <<<"$task")
+          test "$task_sources" -gt 0
+          conversation=$(curl -fsS "$QUANTUM_API_URL/api/conversations/$conversation_id" -H "Authorization: Bearer $token")
+          jq -e '[.messages[] | select(.role == "assistant" and (.content | length > 0) and (.sources | length > 0))] | length > 0' <<<"$conversation" >/dev/null
+          knowledge=$(curl -fsS "$QUANTUM_API_URL/api/knowledge" -H "Authorization: Bearer $token")
+          jq -e '.knowledge | length > 0' <<<"$knowledge" >/dev/null
+          echo "PASS: authenticated website API → GitHub Actions → SmolLM2 CPU inference → protected callback → D1 conversation and source citations."
+          echo "Response preview: ${answer:0:240}"

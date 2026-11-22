@@ -1,0 +1,53 @@
+name: Quantum model CPU smoke test
+on:
+  push:
+    branches: [quantum-cloud-migration]
+    paths:
+      - ".github/workflows/quantum-model-smoke.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  model-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Start Ollama
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup ollama serve >/tmp/ollama-smoke.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/ollama-smoke.log
+          exit 1
+      - name: Pull selected SmolLM2 model and run real CPU inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          ollama pull smollm2:135m-instruct-q8_0
+          python3 - <<'PY'
+          import json, urllib.request
+          payload = json.dumps({
+              "model": "smollm2:135m-instruct-q8_0",
+              "messages": [{"role": "user", "content": "In one short sentence, say hello and identify yourself as SmolLM2."}],
+              "stream": False,
+              "options": {"num_ctx": 2048, "num_predict": 64, "temperature": 0}
+          }).encode()
+          req = urllib.request.Request("http://127.0.0.1:11434/api/chat", data=payload,
+              headers={"Content-Type": "application/json"}, method="POST")
+          with urllib.request.urlopen(req, timeout=600) as response:
+              result = json.loads(response.read())
+          answer = result.get("message", {}).get("content", "").strip()
+          if not answer:
+              raise SystemExit("FAIL: model returned an empty response")
+          print("PASS: real CPU inference returned text")
+          print("Model:", result.get("model"))
+          print("Prompt tokens:", result.get("prompt_eval_count"))
+          print("Generated tokens:", result.get("eval_count"))
+          print("Sample response:", answer[:500])
+          PY

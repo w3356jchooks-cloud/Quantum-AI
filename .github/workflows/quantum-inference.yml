@@ -21,8 +21,8 @@ jobs:
         shell: bash
         env:
           TASK_ID: ${{ inputs.task_id }}
-          QUANTUM_API_URL: ${{ secrets.QUANTUM_API_URL }}
-          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.QUANTUM_INTERNAL_API_SECRET }}
+          QUANTUM_API_URL: https://quantum-ai-w3356jchooks.pages.dev
+          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
           set -euo pipefail
           test -n "$QUANTUM_API_URL"

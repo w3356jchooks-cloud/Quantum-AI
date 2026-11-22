@@ -4,40 +4,38 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080b16">
-  <meta name="description" content="Quantum — private, local-first AI with GPU and CPU inference.">
-  <title>Quantum — Local AI</title>
-  <link rel="stylesheet" href="./styles.css?v=cpu-wasm-ts1">
+  <meta name="description" content="Quantum AI — SmolLM2 running remotely with secure cloud orchestration.">
+  <title>Quantum AI</title>
+  <link rel="stylesheet" href="./styles.css?v=cloud-1">
 </head>
 <body>
   <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
   <div class="app-shell">
     <aside class="sidebar">
-      <div class="brand"><div class="brand-mark">Q</div><div><strong>QUANTUM</strong><small>LOCAL INTELLIGENCE</small></div></div>
+      <div class="brand"><div class="brand-mark">Q</div><div><strong>QUANTUM</strong><small>REMOTE INTELLIGENCE</small></div></div>
       <button id="new-chat" class="new-chat"><span>＋</span> New conversation</button>
       <div class="side-label">WORKSPACE</div>
       <button class="nav-item active" id="open-chat"><span>◈</span> Chat</button>
-      <button class="nav-item" id="open-memory"><span>⌁</span> Local memory</button>
-      <button class="nav-item" id="open-system"><span>⌘</span> System monitor</button>
+      <button class="nav-item" id="open-history"><span>⌁</span> Conversation history</button>
+      <button class="nav-item" id="open-system"><span>⌘</span> System status</button>
+      <div class="history-list" id="history-list"></div>
       <div class="sidebar-bottom">
-        <div class="privacy-card"><span class="privacy-dot"></span><div><b>Private by design</b><small>Your chats stay on this device.</small></div></div>
-        <div class="version">QUANTUM CORE · EARLY ACCESS</div>
+        <div class="privacy-card"><span class="privacy-dot"></span><div><b>Protected gateway</b><small>Private access · encrypted transport</small></div></div>
+        <div class="version">QUANTUM CORE · CLOUD EDITION</div>
       </div>
     </aside>
-
     <main class="main">
       <header class="topbar">
         <div class="mobile-brand"><div class="brand-mark">Q</div><b>QUANTUM</b></div>
-        <div class="model-status"><span class="status-dot" id="status-dot"></span><span id="status-label">Engine not loaded</span></div>
+        <div class="model-status"><span class="status-dot" id="status-dot"></span><span id="status-label">Connecting to Quantum…</span></div>
         <button class="icon-button" id="settings-button" aria-label="Settings">⚙</button>
       </header>
-
       <section class="welcome" id="welcome">
-        <div class="eyebrow"><span class="pulse"></span> YOUR PERSONAL AI · RUNNING LOCALLY</div>
+        <div class="eyebrow"><span class="pulse"></span> CLOUD CONNECTED · REMOTE INFERENCE</div>
         <h1>Think beyond<br><span>the ordinary.</span></h1>
-        <p>Quantum runs its language model directly on your device. Your conversations remain yours.</p>
+        <p>Quantum runs SmolLM2-135M on remote GitHub Actions CPU jobs. Your tablet is the lightweight control panel — no model download or local training required.</p>
         <div class="welcome-actions">
-          <button class="primary-button" id="load-model">Initialize Quantum <span>→</span></button>
-          <span class="load-note" id="load-note">Model files download on first launch · CPU fallback supported</span>
+          <span class="load-note" id="load-note">Sign in to start a secure conversation.</span>
         </div>
         <div class="suggestions">
           <button class="suggestion" data-prompt="Explain how quantum computing works in simple terms."><span>✳</span><b>Explain something</b><small>Make a complex idea simple</small></button>
@@ -45,31 +43,39 @@
           <button class="suggestion" data-prompt="Give me three interesting things to learn today."><span>◇</span><b>Explore</b><small>Discover something new</small></button>
         </div>
       </section>
-
-      <section class="chat-area hidden" id="chat-area">
-        <div id="messages" class="messages"></div>
-      </section>
-
+      <section class="chat-area hidden" id="chat-area"><div id="messages" class="messages"></div></section>
       <section class="composer-wrap">
         <div class="engine-banner" id="engine-banner"><span class="mini-spinner"></span><span id="engine-message">Quantum is preparing…</span></div>
         <form id="chat-form" class="composer">
           <textarea id="prompt" rows="1" placeholder="Message Quantum…" aria-label="Message Quantum" disabled></textarea>
-          <div class="composer-footer"><span><span class="lock-icon">⌑</span> Processed on this device</span><button id="send-button" type="submit" disabled aria-label="Send message">↑</button></div>
+          <div class="composer-footer"><span><span class="lock-icon">⌑</span> Secure remote inference · Cloud history</span><button id="send-button" type="submit" disabled aria-label="Send message">↑</button></div>
         </form>
         <div class="disclaimer">AI can make mistakes. Verify important information.</div>
       </section>
     </main>
-
     <aside class="inspector">
-      <div class="inspector-head"><span>LIVE SYSTEM</span><span class="live-tag">LIVE</span></div>
-      <div class="system-card"><div class="system-title">COMPUTE ENGINE</div><div class="system-value" id="gpu-value">Checking…</div><div class="system-sub" id="gpu-sub">Detecting browser capabilities</div></div>
-      <div class="system-card"><div class="system-title">DEVICE MEMORY</div><div class="system-value" id="ram-value">—</div><div class="system-sub">Browser-reported estimate</div></div>
-      <div class="system-card"><div class="system-title">LOCAL STORAGE</div><div class="system-value" id="storage-value">Checking…</div><div class="system-sub" id="storage-sub">IndexedDB + model cache</div></div>
-      <div class="system-card model-card"><div class="system-title">ACTIVE MODEL</div><div class="model-name">Qwen 2.5 <span>0.5B</span></div><div class="system-sub">Instruct · 4-bit quantized</div><div class="model-chip">WEBGPU + WASM</div></div>
-      <div class="inspector-foot"><span class="privacy-dot"></span> No cloud inference</div>
+      <div class="inspector-head"><span>LIVE SYSTEM</span><span class="live-tag">CLOUD</span></div>
+      <div class="system-card"><div class="system-title">COMPUTE ENGINE</div><div class="system-value" id="gpu-value">GitHub Actions</div><div class="system-sub" id="gpu-sub">Standard hosted CPU runner</div></div>
+      <div class="system-card"><div class="system-title">DEVICE MEMORY</div><div class="system-value">Not used</div><div class="system-sub">Your tablet does not run the model.</div></div>
+      <div class="system-card"><div class="system-title">CLOUD STORAGE</div><div class="system-value" id="storage-value">D1 database</div><div class="system-sub" id="storage-sub">Conversation and task records</div></div>
+      <div class="system-card model-card"><div class="system-title">ACTIVE MODEL</div><div class="model-name">SmolLM2 <span>135M</span></div><div class="system-sub">Instruct · Q8_0 inference build</div><div class="model-chip">REMOTE · CPU</div></div>
+      <div class="inspector-foot"><span class="privacy-dot"></span> Gateway protected</div>
     </aside>
   </div>
+  <section id="auth-gate" class="auth-gate">
+    <form id="auth-form" class="auth-card">
+      <div class="brand-mark auth-mark">Q</div>
+      <div class="eyebrow">QUANTUM AI · PRIVATE ACCESS</div>
+      <h2>Welcome back.</h2>
+      <p>Enter your Quantum access code to connect to the secure cloud engine.</p>
+      <label for="access-code">ACCESS CODE</label>
+      <input id="access-code" type="password" autocomplete="current-password" required maxlength="256" placeholder="Your private access code">
+      <button class="primary-button" id="auth-submit" type="submit">Unlock Quantum <span>→</span></button>
+      <div id="auth-error" class="auth-error" role="alert"></div>
+      <small>Your access code is checked by the protected gateway and is never stored in the browser.</small>
+    </form>
+  </section>
   <dialog id="info-dialog"><div class="dialog-head"><b id="dialog-title">Quantum</b><button id="dialog-close" class="icon-button">✕</button></div><div id="dialog-content" class="dialog-content"></div></dialog>
-  <script type="module" src="./src/app.js?v=cpu-wasm-ts1"></script>
+  <script type="module" src="./src/app.js?v=cloud-1"></script>
 </body>
 </html>

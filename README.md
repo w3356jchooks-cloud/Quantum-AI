@@ -19,7 +19,7 @@ Connect this repository to Cloudflare Pages using the Cloudflare Workers & Pages
 
 - Production branch: `main`
 - Build command: `npm run build`
-- Build output directory: `.`
+- Build output directory: `dist`
 - Root directory: repository root
 
 Create a D1 database named `quantum-ai`, bind it to the Pages project using the binding name `DB`, and apply the SQL in `schema.sql`.

@@ -20,5 +20,7 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Type-check app and Pages Functions
         run: npm run typecheck
+      - name: Run security and integration unit tests
+        run: npm test
       - name: Build browser application
         run: npm run build

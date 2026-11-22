@@ -1,4 +1,4 @@
-import { Env, json, requireSession, dispatchInference, parseJsonBody, SYSTEM_PROMPT } from "../_shared";
+import { Env, json, requireSession, dispatchInference, parseJsonBody, SYSTEM_PROMPT } from "../_shared.js";
 interface Context { request: Request; env: Env; }
 type ChatMessage = { role: "user" | "assistant"; content: string };
 interface Body { conversationId?: string; messages?: ChatMessage[]; }

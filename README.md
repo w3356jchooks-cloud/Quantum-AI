@@ -20,7 +20,7 @@ A deployment workflow is included so you do not have to create the Pages project
 
 | GitHub Actions secret | Purpose |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with account-level D1 Write and Pages Write permissions |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with account-level D1 Write, Pages Write, and Workers R2 Storage Read + Write permissions |
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
 | `APP_ACCESS_CODE` | Private website sign-in code (at least 20 characters) |
 | `SESSION_SECRET` | Random secret of at least 32 characters |

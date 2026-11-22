@@ -35,6 +35,10 @@ jobs:
           done
           curl -fsS http://127.0.0.1:11434/api/version >/dev/null
           ollama pull smollm2:135m-instruct-q8_0
+          actual_digest=$(curl -fsS http://127.0.0.1:11434/api/tags | jq -r '.models[] | select(.name == "smollm2:135m-instruct-q8_0").digest')
+          expected_digest="2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9"
+          test "$actual_digest" = "$expected_digest"
+          echo "Verified selected SmolLM2 model digest: $actual_digest"
           curl -fsS "$QUANTUM_API_URL/api/internal/tasks/$TASK_ID" \
             -H "Authorization: Bearer $QUANTUM_INTERNAL_API_SECRET" \
             -o /tmp/quantum-task.json

@@ -40,7 +40,7 @@ The workflow then:
 6. Sets the inference callback secrets in GitHub Actions.
 7. Checks the deployed health endpoint.
 
-The deployed origin is `https://quantum-ai-w3356jchooks.pages.dev`. The workflow is manual and restricted to `main`; it will not deploy this draft branch.
+The deployed origin is `https://quantum-ai-w3356jchooks.pages.dev`. The workflow is manual and restricted to `main`; it will not deploy this draft branch. After a successful deployment, the **Quantum end-to-end acceptance test** runs automatically. It signs in, acquires a reference, dispatches the real model workflow, waits for the SmolLM2 response, and verifies the callback, saved conversation, and source links. This is the single integrated acceptance test; no separate manual test sequence is intended.
 
 ## Build, type-check, and tests
 

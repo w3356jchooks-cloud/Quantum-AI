@@ -72,7 +72,7 @@ function der(tag: number, value: Uint8Array): Uint8Array {
 }
 function pemBytes(pem: string): Uint8Array {
   const isPkcs1 = pem.includes("BEGIN RSA PRIVATE KEY");
-  const body = pem.replace(/-----BEGIN [A-Z ]+-----|-----END [A-Z ]+-----|\\s/g, "");
+  const body = pem.replace(/-----BEGIN [A-Z ]+-----|-----END [A-Z ]+-----|\s/g, "");
   const binary = atob(body);
   const raw = Uint8Array.from(binary, c => c.charCodeAt(0));
   if (!isPkcs1) return raw;

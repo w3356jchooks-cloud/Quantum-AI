@@ -1,5 +1,5 @@
 import { Env, json, requireSession, dispatchInference, parseJsonBody, SYSTEM_PROMPT } from "../_shared.js";
-import { acquireWikipedia, findKnowledge, knowledgeContext, knowledgeTerms } from "../_knowledge.js";
+import { acquireWikipedia, findKnowledge, knowledgeContext, knowledgeTerms, KnowledgeSource } from "../_knowledge.js";
 interface Context { request: Request; env: Env; }
 type ChatMessage = { role: "user" | "assistant"; content: string };
 interface Body { conversationId?: string; messages?: ChatMessage[]; }
@@ -18,7 +18,7 @@ export async function onRequestPost({ request, env }: Context): Promise<Response
   if (total > 32_000 || messages[messages.length - 1].role !== "user") return json({ error: "Conversation is too large or the latest message is not from the user." }, 400);
   const taskId = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
   const latestQuery = messages[messages.length - 1].content;
-  let sources = [];
+  let sources: KnowledgeSource[] = [];
   try {
     sources = await findKnowledge(env, latestQuery);
     if (!sources.length && knowledgeTerms(latestQuery).length > 0) {

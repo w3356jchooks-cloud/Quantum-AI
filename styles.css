@@ -37,3 +37,8 @@
 .knowledge-remove{border:1px solid #4b3446;border-radius:7px;background:#251722;color:#f1b5c5;padding:7px 9px;font-size:10px;cursor:pointer}
 .knowledge-remove:disabled{opacity:.5}
 @media(max-width:650px){.knowledge-form{flex-direction:column}.knowledge-form .dialog-action{width:100%}}
+
+.message-sources{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:13px;padding-top:10px;border-top:1px solid #24314a}
+.message-sources small{color:#7787a4;font:9px 'DM Mono';letter-spacing:1px}
+.message-sources a{color:#8bd7ee;font-size:10px;text-decoration:none;border:1px solid #2b5269;border-radius:20px;padding:4px 8px;max-width:100%;overflow-wrap:anywhere}
+.message-sources a:hover{text-decoration:underline;background:#14283b}

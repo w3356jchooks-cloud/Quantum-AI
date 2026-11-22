@@ -8,7 +8,7 @@ export async function onRequestPost({ request, env }: Context): Promise<Response
   try { body = await parseJsonBody<Body>(request); } catch { return json({ error: "Invalid or oversized request." }, 400); }
   const conversationId = typeof body.conversationId === "string" && /^[a-zA-Z0-9-]{16,64}$/.test(body.conversationId) ? body.conversationId : "";
   const messages = body.messages;
-  if (!conversationId || !Array.isArray(messages) || messages.length < 1 || messages.length > 24) return json({ error: "A conversation ID and 1–24 messages are required." }, 400);
+  if (!conversationId || !Array.isArray(messages) || messages.length < 1 || messages.length > 50) return json({ error: "A conversation ID and 1–50 messages are required." }, 400);
   let total = 0;
   for (const message of messages) {
     if (!message || !["user", "assistant"].includes(message.role) || typeof message.content !== "string" || message.content.length > 4000) return json({ error: "Invalid message format." }, 400);

@@ -1,4 +1,4 @@
-import { Env, json, requireInternal, parseJsonBody } from "../../_shared";
+import { Env, json, requireInternal, parseJsonBody } from "../../_shared.js";
 interface Context { request: Request; env: Env; }
 interface Body { taskId?: string; status?: "complete" | "failed"; answer?: string; error?: string; }
 export async function onRequestPost({ request, env }: Context): Promise<Response> {

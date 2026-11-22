@@ -20,7 +20,16 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Type-check app and Pages Functions
         run: npm run typecheck
+      - name: Validate D1 schema SQL
+        run: python3 -c "import sqlite3; db=sqlite3.connect(':memory:'); db.executescript(open('schema.sql').read()); print('D1 schema SQL is valid.')"
       - name: Run security and integration unit tests
         run: npm test
       - name: Build browser application
         run: npm run build
+      - name: Verify deployable Pages output
+        run: |
+          test -s dist/index.html
+          test -s dist/styles.css
+          test -s dist/src/app.js
+          test -s dist/_headers
+          ! grep -R -i -E 'hugging.?face|transformers\.js|onnxruntime' dist

@@ -61,19 +61,19 @@ jobs:
           set -euo pipefail
           MODEL="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-f16.gguf"
           DATA="$GITHUB_WORKSPACE/training-test/train.jsonl"
-          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --checkpoint-save-steps 1 --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints" -o "$GITHUB_WORKSPACE/training-test/adapter.gguf"
+          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --checkpoint-save-steps 1 --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints" -o "$GITHUB_WORKSPACE/training-test/adapter.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/adapter.gguf"
           find "$GITHUB_WORKSPACE/training-test/checkpoints" -maxdepth 2 -type f -print
           CHECKPOINT=$(find "$GITHUB_WORKSPACE/training-test/checkpoints" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
           test -n "$CHECKPOINT"
-          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
-          build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 256 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 512 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
       - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
         working-directory: llama.cpp
         run: |
           set -euo pipefail
           MODEL="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-f16.gguf"
           DATA="$GITHUB_WORKSPACE/training-test/train.txt"
-          build/bin/llama-finetune -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 -epochs 1 -lr 0.00001 -o "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"
+          build/bin/llama-finetune -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 -epochs 1 -lr 0.00001 -o "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"

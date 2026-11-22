@@ -1,0 +1,113 @@
+name: Bootstrap and deploy Quantum on Cloudflare
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      APP_ACCESS_CODE: ${{ secrets.APP_ACCESS_CODE }}
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
+      GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+      GITHUB_INSTALLATION_ID: ${{ secrets.GITHUB_INSTALLATION_ID }}
+      GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+      PROJECT_NAME: quantum-ai-w3356jchooks
+      DATABASE_NAME: quantum-ai
+    steps:
+      - name: Check out Quantum
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate required one-time credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing GitHub Actions secret: $name"; exit 1; fi
+          done
+          test "${#APP_ACCESS_CODE}" -ge 20
+          test "${#SESSION_SECRET}" -ge 32
+          test "${#INTERNAL_API_SECRET}" -ge 32
+      - name: Install dependencies and build Pages assets
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Find or create Cloudflare D1 database
+        id: d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database")
+          database_id=$(jq -r --arg name "$DATABASE_NAME" '.result[]? | select(.name == $name) | .uuid' <<<"$response" | head -n1)
+          if [ -z "$database_id" ]; then
+            created=$(curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database" --data "$(jq -n --arg name "$DATABASE_NAME" '{name:$name}')")
+            database_id=$(jq -r '.result.uuid // empty' <<<"$created")
+          fi
+          test -n "$database_id"
+          echo "database_id=$database_id" >> "$GITHUB_OUTPUT"
+      - name: Find or create Cloudflare Pages project
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects")
+          exists=$(jq -r --arg name "$PROJECT_NAME" '[.result[]? | select(.name == $name)] | length' <<<"$response")
+          if [ "$exists" = "0" ]; then
+            curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
+              --data "$(jq -n --arg name "$PROJECT_NAME" '{name:$name,production_branch:"main"}')" >/dev/null
+          fi
+      - name: Bind D1 and apply the database schema
+        env:
+          D1_DATABASE_ID: ${{ steps.d1.outputs.database_id }}
+        run: |
+          cat > wrangler.toml <<EOF
+          name = "$PROJECT_NAME"
+          compatibility_date = "2026-11-22"
+          pages_build_output_dir = "./dist"
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "$DATABASE_NAME"
+          database_id = "$D1_DATABASE_ID"
+          EOF
+          npx --yes wrangler@4 d1 execute "$DATABASE_NAME" --remote --file schema.sql --config wrangler.toml
+      - name: Upload production secrets to Cloudflare Pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY; do
+            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT_NAME" --config wrangler.toml
+          done
+      - name: Deploy Quantum Pages and Functions
+        run: npx --yes wrangler@4 pages deploy dist --project-name "$PROJECT_NAME" --branch main --config wrangler.toml
+      - name: Configure inference callback secrets in this repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
+        run: |
+          set -euo pipefail
+          gh secret set QUANTUM_API_URL --repo "$GITHUB_REPOSITORY" --body "https://$PROJECT_NAME.pages.dev"
+          gh secret set QUANTUM_INTERNAL_API_SECRET --repo "$GITHUB_REPOSITORY" --body "$QUANTUM_INTERNAL_API_SECRET"
+      - name: Verify deployed health endpoint
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            if curl -fsS "https://$PROJECT_NAME.pages.dev/api/health" | jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true' >/dev/null; then
+              echo "Quantum deployment health check passed."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Cloudflare deployment did not pass its health check."
+          exit 1

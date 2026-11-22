@@ -1,0 +1,13 @@
+{
+  "name": "quantum-ai",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.functions.json",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.functions.json"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

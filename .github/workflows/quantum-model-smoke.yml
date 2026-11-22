@@ -31,8 +31,9 @@ jobs:
           set -euo pipefail
           ollama pull smollm2:135m-instruct-q8_0
           digest=$(curl -fsS http://127.0.0.1:11434/api/tags | jq -r '.models[] | select(.name == "smollm2:135m-instruct-q8_0").digest')
-          test -n "$digest"
-          echo "Verified SmolLM2 Q8_0 model digest: $digest"
+          expected="2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9"
+          test "$digest" = "$expected"
+          echo "Verified pinned SmolLM2 Q8_0 model digest: $digest"
           python3 - <<'PY'
           import json, urllib.request
           payload = json.dumps({

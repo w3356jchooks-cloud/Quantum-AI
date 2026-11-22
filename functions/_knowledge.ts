@@ -1,4 +1,4 @@
-import { Env } from "./_shared";
+import { Env } from "./_shared.js";
 export interface KnowledgeSource {
   id: string;
   title: string;

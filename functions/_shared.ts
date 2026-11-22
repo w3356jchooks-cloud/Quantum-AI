@@ -60,11 +60,28 @@ export function requireInternal(request: Request, env: Env): Response | null {
   if (!env.INTERNAL_API_SECRET || !safeEqual(supplied, env.INTERNAL_API_SECRET)) return json({ error: "Forbidden." }, 403);
   return null;
 }
-function pemBytes(pem: string): Uint8Array {
-  const body = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
-  const binary = atob(body);
-  return Uint8Array.from(binary, c => c.charCodeAt(0));
+function derLength(length: number): Uint8Array {
+  if (length < 128) return Uint8Array.of(length);
+  const bytes: number[] = [];
+  let n = length;
+  while (n > 0) { bytes.unshift(n & 255); n >>>= 8; }
+  return Uint8Array.of(0x80 | bytes.length, ...bytes);
 }
+function der(tag: number, value: Uint8Array): Uint8Array {
+  return new Uint8Array([tag, ...derLength(value.length), ...value]);
+}
+function pemBytes(pem: string): Uint8Array {
+  const isPkcs1 = pem.includes("BEGIN RSA PRIVATE KEY");
+  const body = pem.replace(/-----BEGIN [A-Z ]+-----|-----END [A-Z ]+-----|\\s/g, "");
+  const binary = atob(body);
+  const raw = Uint8Array.from(binary, c => c.charCodeAt(0));
+  if (!isPkcs1) return raw;
+  // GitHub App private keys are PKCS#1 PEM; WebCrypto imports PKCS#8.
+  const version = Uint8Array.of(0x02, 0x01, 0x00);
+  const algorithm = Uint8Array.of(0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00);
+  return der(0x30, new Uint8Array([...version, ...algorithm, ...der(0x04, raw)]));
+}
+
 export async function githubInstallationToken(env: Env): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const header = b64url(encoder.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));

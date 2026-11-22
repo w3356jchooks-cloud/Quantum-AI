@@ -119,11 +119,14 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
     const taskResponse=await readTask({request:new Request("https://quantum.test/api/tasks/"+taskId,{headers:{authorization:"Bearer "+token}}),env,params:{id:taskId}});
     assert.equal(taskResponse.status,200);
     assert.equal((await taskResponse.json()).status,"complete");
+    const duplicateCallback=await completeTask({request:jsonRequest("https://quantum.test/api/internal/complete",{taskId,status:"complete",answer:"Duplicate must not overwrite."},{authorization:"Bearer "+env.INTERNAL_API_SECRET}),env});
+    assert.equal(duplicateCallback.status,200);
     const listResponse=await listConversations({request:new Request("https://quantum.test/api/conversations",{headers:{authorization:"Bearer "+token}}),env});
     assert.equal((await listResponse.json()).conversations.length,1);
     const conversationResponse=await readConversation({request:new Request("https://quantum.test/api/conversations/"+conversationId,{headers:{authorization:"Bearer "+token}}),env,params:{id:conversationId}});
     const saved=await conversationResponse.json();
     assert.equal(saved.messages.at(-1).content,"Hello from SmolLM2.");
+    assert.equal(saved.messages.filter(message=>message.role==="assistant").length,1);
   } finally {
     globalThis.fetch=originalFetch;
   }

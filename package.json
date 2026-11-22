@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.app.json && tsc -p tsconfig.functions.json && node scripts/build.mjs",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.functions.json"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.functions.json",
+    "test": "tsc -p tsconfig.functions.test.json && node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "5.8.3"

@@ -19,6 +19,7 @@ jobs:
       GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
       PROJECT_NAME: quantum-ai-w3356jchooks
       DATABASE_NAME: quantum-ai
+      R2_BUCKET_NAME: quantum-ai-artifacts
     steps:
       - name: Check out Quantum
         uses: actions/checkout@v4
@@ -56,6 +57,17 @@ jobs:
           fi
           test -n "$database_id"
           echo "database_id=$database_id" >> "$GITHUB_OUTPUT"
+      - name: Find or create private R2 artifact bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets?name_contains=$R2_BUCKET_NAME")
+          exists=$(jq -r --arg name "$R2_BUCKET_NAME" '[.result.buckets[]? | select(.name == $name)] | length' <<<"$response")
+          if [ "$exists" = "0" ]; then
+            curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets" \
+              --data "$(jq -n --arg name "$R2_BUCKET_NAME" '{name:$name,locationHint:"apac"}')" >/dev/null
+          fi
       - name: Find or create Cloudflare Pages project
         shell: bash
         run: |
@@ -73,14 +85,52 @@ jobs:
         run: |
           cat > wrangler.toml <<EOF
           name = "$PROJECT_NAME"
+          account_id = "$CLOUDFLARE_ACCOUNT_ID"
           compatibility_date = "2026-11-22"
           pages_build_output_dir = "./dist"
           [[d1_databases]]
           binding = "DB"
           database_name = "$DATABASE_NAME"
           database_id = "$D1_DATABASE_ID"
+          [[r2_buckets]]
+          binding = "ARTIFACTS"
+          bucket_name = "$R2_BUCKET_NAME"
           EOF
           npx --yes wrangler@4 d1 execute "$DATABASE_NAME" --remote --file schema.sql --config wrangler.toml
+      - name: Mirror verified model artifacts into private R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve >/tmp/ollama-mirror.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          ollama pull smollm2:135m-instruct-q8_0
+          ollama pull smollm2:135m-instruct-fp16
+          q8_digest=$(curl -fsS http://127.0.0.1:11434/api/tags | jq -r '.models[] | select(.name == "smollm2:135m-instruct-q8_0").digest')
+          expected_q8="2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9"
+          test "$q8_digest" = "$expected_q8"
+          fp16_digest=$(curl -fsS http://127.0.0.1:11434/api/tags | jq -r '.models[] | select(.name == "smollm2:135m-instruct-fp16").digest')
+          test -n "$fp16_digest"
+          ollama show --modelfile smollm2:135m-instruct-q8_0 > /tmp/quantum-q8.Modelfile
+          ollama show --modelfile smollm2:135m-instruct-fp16 > /tmp/quantum-fp16.Modelfile
+          q8_path=$(awk '/^FROM / {print $2; exit}' /tmp/quantum-q8.Modelfile)
+          fp16_path=$(awk '/^FROM / {print $2; exit}' /tmp/quantum-fp16.Modelfile)
+          test -s "$q8_path" && test -s "$fp16_path"
+          q8_sha=$(sha256sum "$q8_path" | awk '{print $1}')
+          fp16_sha=$(sha256sum "$fp16_path" | awk '{print $1}')
+          printf '%s' "$q8_sha" > /tmp/quantum-q8.sha256
+          printf '%s' "$fp16_sha" > /tmp/quantum-fp16.sha256
+          jq -n --arg q8 "$q8_sha" --arg q8digest "$q8_digest" --arg fp16 "$fp16_sha" --arg fp16digest "$fp16_digest" \
+            '{version:"smollm2-135m-instruct-base",model:"models/base/smollm2-135m-instruct-q8_0.gguf",model_sha256:$q8,model_manifest_digest:$q8digest,training_model:"models/training/smollm2-135m-instruct-fp16.gguf",training_model_sha256:$fp16,training_model_manifest_digest:$fp16digest,adapter:null}' > /tmp/quantum-active.json
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/base/smollm2-135m-instruct-q8_0.gguf" --file "$q8_path" --remote --content-type application/octet-stream --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/base/smollm2-135m-instruct-q8_0.sha256" --file /tmp/quantum-q8.sha256 --remote --content-type text/plain --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/training/smollm2-135m-instruct-fp16.gguf" --file "$fp16_path" --remote --content-type application/octet-stream --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/training/smollm2-135m-instruct-fp16.sha256" --file /tmp/quantum-fp16.sha256 --remote --content-type text/plain --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-active.json --remote --content-type application/json --config wrangler.toml
+          echo "Mirrored Q8_0 inference and FP16 training model assets into the private R2 bucket."
       - name: Upload production secrets to Cloudflare Pages
         shell: bash
         run: |

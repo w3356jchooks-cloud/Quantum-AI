@@ -15,6 +15,12 @@ jobs:
       QUANTUM_API_URL: https://quantum-ai-w3356jchooks.pages.dev
       APP_ACCESS_CODE: ${{ secrets.APP_ACCESS_CODE }}
     steps:
+      - name: Check out Quantum acceptance tests
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Verify deployed gateway readiness
         shell: bash
         run: |
@@ -62,3 +68,8 @@ jobs:
           jq -e '.knowledge | length > 0' <<<"$knowledge" >/dev/null
           echo "PASS: authenticated website API → GitHub Actions → SmolLM2 CPU inference → protected callback → D1 conversation and source citations."
           echo "Response preview: ${answer:0:240}"
+      - name: Verify the actual tablet-sized website in Chromium
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          node tests/e2e-browser.mjs

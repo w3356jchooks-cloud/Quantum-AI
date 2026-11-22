@@ -1,0 +1,81 @@
+name: Quantum inference
+run-name: Quantum inference · ${{ inputs.task_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: Internal Quantum task identifier
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: quantum-task-${{ inputs.task_id }}
+  cancel-in-progress: false
+jobs:
+  inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Start Ollama and acquire the pinned model tag
+        shell: bash
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+          QUANTUM_API_URL: ${{ secrets.QUANTUM_API_URL }}
+          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.QUANTUM_INTERNAL_API_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$QUANTUM_API_URL"
+          test -n "$QUANTUM_INTERNAL_API_SECRET"
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve >/tmp/ollama.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:11434/api/version >/dev/null
+          ollama pull smollm2:135m-instruct-q8_0
+          curl -fsS "$QUANTUM_API_URL/api/internal/tasks/$TASK_ID" \
+            -H "Authorization: Bearer $QUANTUM_INTERNAL_API_SECRET" \
+            -o /tmp/quantum-task.json
+          python3 - <<'PY'
+          import json, os, urllib.request
+          with open("/tmp/quantum-task.json", encoding="utf-8") as f:
+              task = json.load(f)
+          payload = json.dumps({
+              "model": "smollm2:135m-instruct-q8_0",
+              "messages": task["messages"],
+              "stream": False,
+              "options": {"num_ctx": 8192, "num_predict": 256, "temperature": 0.7, "top_p": 0.9}
+          }).encode()
+          req = urllib.request.Request("http://127.0.0.1:11434/api/chat", data=payload,
+              headers={"Content-Type": "application/json"}, method="POST")
+          with urllib.request.urlopen(req, timeout=900) as response:
+              result = json.loads(response.read())
+          answer = result.get("message", {}).get("content", "").strip()
+          if not answer:
+              raise RuntimeError("The model returned an empty response.")
+          callback = json.dumps({"taskId": os.environ["TASK_ID"], "status": "complete", "answer": answer}).encode()
+          cb = urllib.request.Request(os.environ["QUANTUM_API_URL"].rstrip("/") + "/api/internal/complete",
+              data=callback, headers={"Content-Type": "application/json",
+              "Authorization": "Bearer " + os.environ["QUANTUM_INTERNAL_API_SECRET"]}, method="POST")
+          with urllib.request.urlopen(cb, timeout=60) as response:
+              print("Quantum completion callback:", response.status)
+          print("Model:", result.get("model", "SmolLM2-135M-Instruct"))
+          print("Prompt tokens:", result.get("prompt_eval_count", "unknown"))
+          print("Generated tokens:", result.get("eval_count", "unknown"))
+          PY
+      - name: Report failed inference
+        if: failure()
+        shell: bash
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+          QUANTUM_API_URL: ${{ secrets.QUANTUM_API_URL }}
+          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.QUANTUM_INTERNAL_API_SECRET }}
+        run: |
+          if [ -n "$QUANTUM_API_URL" ] && [ -n "$QUANTUM_INTERNAL_API_SECRET" ]; then
+            payload=$(jq -n --arg taskId "$TASK_ID" --arg status "failed" --arg error "The GitHub Actions inference job failed. Check its run logs." '{taskId:$taskId,status:$status,error:$error}')
+            curl -fsS "$QUANTUM_API_URL/api/internal/complete" \
+              -H "Authorization: Bearer $QUANTUM_INTERNAL_API_SECRET" \
+              -H "Content-Type: application/json" -d "$payload" || true
+          fi

@@ -92,6 +92,7 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
   const githubCalls = [];
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
+    if(url.includes("en.wikipedia.org")) return new Response(JSON.stringify({query:{search:[]}}),{status:200,headers:{"content-type":"application/json"}});
     githubCalls.push({url,init});
     if(url.endsWith("/access_tokens")) return new Response(JSON.stringify({token:"short-lived-test-token"}),{status:201,headers:{"content-type":"application/json"}});
     if(url.endsWith("/dispatches")) return new Response(null,{status:204});

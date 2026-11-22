@@ -7,6 +7,7 @@ export interface D1Statement {
 export interface D1Database { prepare(sql: string): D1Statement; }
 export interface Env {
   DB: D1Database;
+  ARTIFACTS?: unknown;
   APP_ACCESS_CODE: string;
   SESSION_SECRET: string;
   INTERNAL_API_SECRET: string;

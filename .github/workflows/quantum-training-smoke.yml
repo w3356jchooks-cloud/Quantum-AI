@@ -35,6 +35,7 @@ jobs:
             sleep 2
           done
           ollama pull smollm2:135m-instruct-fp16
+          ollama pull smollm2:135m-instruct-q8_0
           ollama show --modelfile smollm2:135m-instruct-fp16 > /tmp/Quantum.Modelfile
           MODEL_PATH=$(awk '/^FROM / {print $2; exit}' /tmp/Quantum.Modelfile)
           test -s "$MODEL_PATH"
@@ -57,7 +58,7 @@ jobs:
               "A standard week has seven days."
           ]
           with open("training-test/train.txt", "w", encoding="utf-8") as output:
-              output.write("\n".join(sentences * 256))
+              output.write("\n".join(sentences * 128))
           print("Prepared", sum(len(line.split()) for line in sentences) * 256, "training words.")
           PY
       - name: Run LoRA fine-tuning, checkpoint, resume, and adapter load
@@ -69,11 +70,27 @@ jobs:
           build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --checkpoint-save-steps 1 --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints" -o "$GITHUB_WORKSPACE/training-test/adapter.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/adapter.gguf"
           find "$GITHUB_WORKSPACE/training-test/checkpoints" -maxdepth 2 -type f -print
-          CHECKPOINT=$(find "$GITHUB_WORKSPACE/training-test/checkpoints" -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)
-          test -n "$CHECKPOINT"
+          CHECKPOINT="$GITHUB_WORKSPACE/training-test/checkpoints/checkpoint_step_00000001"
+          test -d "$CHECKPOINT"
           build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 512 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          cat > "$GITHUB_WORKSPACE/training-test/Modelfile" <<EOF
+          FROM smollm2:135m-instruct-q8_0
+          ADAPTER $GITHUB_WORKSPACE/training-test/adapter-resumed.gguf
+          EOF
+          ollama create quantum-lora-smoke -f "$GITHUB_WORKSPACE/training-test/Modelfile"
+          python3 - <<'PY'
+          import json, urllib.request
+          payload=json.dumps({"model":"quantum-lora-smoke","messages":[{"role":"user","content":"Reply with a short greeting."}],"stream":False,"options":{"num_predict":48}}).encode()
+          req=urllib.request.Request("http://127.0.0.1:11434/api/chat",data=payload,headers={"Content-Type":"application/json"},method="POST")
+          with urllib.request.urlopen(req,timeout=600) as response:
+              result=json.loads(response.read())
+          answer=result.get("message",{}).get("content","").strip()
+          if not answer: raise SystemExit("LoRA-enabled Ollama model returned an empty response")
+          print("PASS: Ollama loaded the trained GGUF adapter on the Q8 inference model.")
+          print(answer)
+          PY
       - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
         working-directory: llama.cpp
         run: |

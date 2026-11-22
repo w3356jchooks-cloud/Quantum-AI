@@ -1,9 +1,9 @@
-import { Env, json, requireInternal } from "../../_shared";
+import { Env, json, requireInternal, parseJsonBody } from "../../_shared";
 interface Context { request: Request; env: Env; }
 interface Body { taskId?: string; status?: "complete" | "failed"; answer?: string; error?: string; }
 export async function onRequestPost({ request, env }: Context): Promise<Response> {
   const denied = requireInternal(request, env); if (denied) return denied;
-  let body: Body; try { body = await request.json() as Body; } catch { return json({ error: "Invalid JSON." }, 400); }
+  let body: Body; try { body = await parseJsonBody<Body>(request, 16_000); } catch { return json({ error: "Invalid or oversized JSON." }, 400); }
   if (!body.taskId || !["complete", "failed"].includes(body.status || "")) return json({ error: "taskId and a valid status are required." }, 400);
   const answer = typeof body.answer === "string" ? body.answer.slice(0, 12000) : "";
   const error = typeof body.error === "string" ? body.error.slice(0, 500) : "";

@@ -1,5 +1,6 @@
 type Role = "user" | "assistant";
-type Message = { role: Role; content: string };
+type SourceLink = { title: string; url: string; source: string };
+type Message = { role: Role; content: string; sources?: SourceLink[] };
 type Conversation = { id: string; title: string; updated_at: number };
 type ApiError = { error?: string };
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -79,6 +80,22 @@ function renderMessages(): void {
     text.className = "message-text";
     text.textContent = message.content;
     body.append(label, text);
+    if (message.role === "assistant" && message.sources?.length) {
+      const sourceList = document.createElement("div");
+      sourceList.className = "message-sources";
+      const sourceLabel = document.createElement("small");
+      sourceLabel.textContent = "REFERENCES";
+      sourceList.append(sourceLabel);
+      for (const source of message.sources) {
+        const link = document.createElement("a");
+        link.href = source.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = source.title;
+        sourceList.append(link);
+      }
+      body.append(sourceList);
+    }
     article.append(avatar, body);
     ui.messages.append(article);
   }
@@ -148,11 +165,11 @@ function newChat(): void {
   ui.prompt.value = "";
   ui.prompt.focus();
 }
-async function pollTask(taskId: string): Promise<string> {
+async function pollTask(taskId: string): Promise<{ answer: string; sources: SourceLink[] }> {
   for (let attempt = 0; attempt < 900; attempt++) {
     await new Promise(resolve => window.setTimeout(resolve, 2000));
-    const task = await api<{ status: string; answer?: string; error?: string }>("/api/tasks/" + encodeURIComponent(taskId));
-    if (task.status === "complete") return task.answer || "";
+    const task = await api<{ status: string; answer?: string; error?: string; sources?: SourceLink[] }>("/api/tasks/" + encodeURIComponent(taskId));
+    if (task.status === "complete") return { answer: task.answer || "", sources: task.sources || [] };
     if (task.status === "failed") throw new Error(task.error || "The inference job failed.");
     banner(task.status === "running" ? "SmolLM2 is generating a response on the remote CPU runner…" : "Waiting for a GitHub Actions runner…");
   }
@@ -172,8 +189,8 @@ async function send(raw: string): Promise<void> {
       body: JSON.stringify({ conversationId, messages })
     });
     if (queued.knowledgeSources?.length) banner("Using " + queued.knowledgeSources.length + " saved Wikipedia references for this answer…");
-    const answer = await pollTask(queued.taskId);
-    messages.push({ role: "assistant", content: answer });
+    const completed = await pollTask(queued.taskId);
+    messages.push({ role: "assistant", content: completed.answer, ...(completed.sources.length ? { sources: completed.sources } : {}) });
     renderMessages();
     setStatus("Response received · SmolLM2-135M", true);
     await loadConversations();

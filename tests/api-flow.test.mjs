@@ -25,9 +25,9 @@ class FakeD1 {
         if (sql.includes("FROM tasks WHERE id = ?")) {
           const task = db.tasks.get(values[0]);
           if (!task) return null;
-          if (sql.includes("conversation_id, messages_json")) return { conversation_id: task.conversation_id, messages_json: task.messages_json };
+          if (sql.includes("conversation_id, messages_json")) return { conversation_id: task.conversation_id, messages_json: task.messages_json, sources_json: task.sources_json };
           if (sql.includes("id, status, messages_json")) return { id: task.id, status: task.status, messages_json: task.messages_json };
-          return { id: task.id, status: task.status, answer: task.answer, error: task.error, created_at: task.created_at, updated_at: task.updated_at };
+          return { id: task.id, status: task.status, answer: task.answer, error: task.error, sources_json: task.sources_json, created_at: task.created_at, updated_at: task.updated_at };
         }
         if (sql.includes("FROM conversations WHERE id = ?")) {
           const row = db.conversations.get(values[0]);
@@ -50,8 +50,8 @@ class FakeD1 {
           const previous = db.conversations.get(id);
           db.conversations.set(id,{id,title,messages_json,created_at:previous?.created_at ?? created_at,updated_at});
         } else if (sql.startsWith("INSERT INTO tasks")) {
-          const [id,conversation_id,messages_json,created_at,updated_at] = values;
-          db.tasks.set(id,{id,conversation_id,messages_json,status:"queued",answer:null,error:null,created_at,updated_at});
+          const [id,conversation_id,messages_json,sources_json,created_at,updated_at] = values;
+          db.tasks.set(id,{id,conversation_id,messages_json,sources_json,status:"queued",answer:null,error:null,created_at,updated_at});
         } else if (sql.includes("SET status = 'running'")) {
           const task=db.tasks.get(values[1]); if(task && task.status==="queued"){task.status="running";task.updated_at=values[0];}
         } else if (sql.startsWith("UPDATE tasks SET status = ?")) {

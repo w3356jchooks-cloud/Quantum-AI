@@ -1,9 +1,9 @@
-import { Env, json, issueSession, safeEqual } from "../_shared";
+import { Env, json, issueSession, safeEqual, parseJsonBody } from "../_shared";
 interface Context { request: Request; env: Env; }
 export async function onRequestPost({ request, env }: Context): Promise<Response> {
-  if (!env.DB || !env.APP_ACCESS_CODE || !env.SESSION_SECRET) return json({ error: "Quantum authentication is not configured yet." }, 503);
+  if (!env.DB || !env.APP_ACCESS_CODE || env.APP_ACCESS_CODE.length < 20 || !env.SESSION_SECRET || env.SESSION_SECRET.length < 32) return json({ error: "Quantum authentication is not configured yet." }, 503);
   let body: { accessCode?: unknown };
-  try { body = await request.json() as typeof body; } catch { return json({ error: "Invalid request." }, 400); }
+  try { body = await parseJsonBody<typeof body>(request, 1024); } catch { return json({ error: "Invalid request." }, 400); }
   const code = typeof body.accessCode === "string" ? body.accessCode.slice(0, 256) : "";
   const ip = request.headers.get("cf-connecting-ip") || "unknown";
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip));

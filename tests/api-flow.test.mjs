@@ -13,6 +13,7 @@ class FakeD1 {
   conversations = new Map();
   tasks = new Map();
   attempts = [];
+  knowledge = [];
   prepare(sql) {
     let values = [];
     const db = this;
@@ -39,6 +40,10 @@ class FakeD1 {
       async all() {
         if (sql.includes("FROM conversations ORDER BY")) {
           return { results: [...db.conversations.values()].sort((a,b) => b.updated_at-a.updated_at).map(({id,title,updated_at})=>({id,title,updated_at})) };
+        }
+        if (sql.includes("FROM knowledge WHERE")) {
+          const terms=values.map(v=>String(v).replaceAll("%","").toLowerCase());
+          return { results: db.knowledge.filter(row=>terms.some(term=>(row.title+" "+row.search_text).toLowerCase().includes(term))) };
         }
         return { results: [] };
       },
@@ -104,7 +109,8 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
     const {token}=await authResponse.json();
     assert.ok(token);
     const conversationId="123e4567-e89b-12d3-a456-426614174000";
-    const messages=[{role:"user",content:"Say hello in one sentence."}];
+    env.DB.knowledge.push({id:"knowledge-1",title:"Quantum mechanics",extract:"Quantum mechanics is a fundamental theory in physics.",source_url:"https://en.wikipedia.org/wiki/Quantum_mechanics",source_name:"Wikipedia",search_text:"quantum mechanics fundamental theory physics",created_at:Math.floor(Date.now()/1000)});
+    const messages=[{role:"user",content:"Explain quantum mechanics in one sentence."}];
     const chatResponse=await createChat({request:jsonRequest("https://quantum.test/api/chat",{conversationId,messages},{authorization:"Bearer "+token}),env});
     assert.equal(chatResponse.status,202);
     const {taskId}=await chatResponse.json();
@@ -118,7 +124,10 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
     assert.equal(callback.status,200);
     const taskResponse=await readTask({request:new Request("https://quantum.test/api/tasks/"+taskId,{headers:{authorization:"Bearer "+token}}),env,params:{id:taskId}});
     assert.equal(taskResponse.status,200);
-    assert.equal((await taskResponse.json()).status,"complete");
+    const completedTask=await taskResponse.json();
+    assert.equal(completedTask.status,"complete");
+    assert.equal(completedTask.sources.length,1);
+    assert.equal(completedTask.sources[0].title,"Quantum mechanics");
     const duplicateCallback=await completeTask({request:jsonRequest("https://quantum.test/api/internal/complete",{taskId,status:"complete",answer:"Duplicate must not overwrite."},{authorization:"Bearer "+env.INTERNAL_API_SECRET}),env});
     assert.equal(duplicateCallback.status,200);
     const listResponse=await listConversations({request:new Request("https://quantum.test/api/conversations",{headers:{authorization:"Bearer "+token}}),env});
@@ -126,6 +135,7 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
     const conversationResponse=await readConversation({request:new Request("https://quantum.test/api/conversations/"+conversationId,{headers:{authorization:"Bearer "+token}}),env,params:{id:conversationId}});
     const saved=await conversationResponse.json();
     assert.equal(saved.messages.at(-1).content,"Hello from SmolLM2.");
+    assert.equal(saved.messages.at(-1).sources[0].url,"https://en.wikipedia.org/wiki/Quantum_mechanics");
     assert.equal(saved.messages.filter(message=>message.role==="assistant").length,1);
   } finally {
     globalThis.fetch=originalFetch;

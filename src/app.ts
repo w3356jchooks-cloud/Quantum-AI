@@ -165,7 +165,6 @@ async function send(raw: string): Promise<void> {
   if (messages.length > 50) messages = messages.slice(-50);
   renderMessages();
   ui.prompt.value = "";
-  ui.prompt.style.height = "auto";
   setBusy(true, "Sending your prompt to Quantum…");
   try {
     const queued = await api<{ taskId: string; status: string }>("/api/chat", {
@@ -218,7 +217,6 @@ ui.authForm.addEventListener("submit", async event => {
 ui.form.addEventListener("submit", event => { event.preventDefault(); void send(ui.prompt.value); });
 ui.prompt.addEventListener("input", () => {
   ui.prompt.style.height = "auto";
-  ui.prompt.style.height = Math.min(ui.prompt.scrollHeight, 150) + "px";
 });
 ui.prompt.addEventListener("keydown", event => {
   if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); ui.form.requestSubmit(); }

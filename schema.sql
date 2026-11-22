@@ -1,4 +1,3 @@
-PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,

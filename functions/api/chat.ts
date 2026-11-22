@@ -1,4 +1,5 @@
 import { Env, json, requireSession, dispatchInference, parseJsonBody, SYSTEM_PROMPT } from "../_shared.js";
+import { acquireWikipedia, findKnowledge, knowledgeContext, knowledgeTerms } from "../_knowledge.js";
 interface Context { request: Request; env: Env; }
 type ChatMessage = { role: "user" | "assistant"; content: string };
 interface Body { conversationId?: string; messages?: ChatMessage[]; }
@@ -16,7 +17,24 @@ export async function onRequestPost({ request, env }: Context): Promise<Response
   }
   if (total > 32_000 || messages[messages.length - 1].role !== "user") return json({ error: "Conversation is too large or the latest message is not from the user." }, 400);
   const taskId = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
-  const taskMessages = [{ role: "system", content: SYSTEM_PROMPT }, ...messages.slice(-20)];
+  const latestQuery = messages[messages.length - 1].content;
+  let sources = [];
+  try {
+    sources = await findKnowledge(env, latestQuery);
+    if (!sources.length && knowledgeTerms(latestQuery).length > 0) {
+      const recent = await env.DB.prepare("SELECT COUNT(*) AS count FROM knowledge_requests WHERE created_at > ?").bind(now - 60).first<{ count: number }>();
+      if ((recent?.count || 0) < 6) {
+        await env.DB.prepare("INSERT INTO knowledge_requests (query, created_at) VALUES (?, ?)").bind(latestQuery.slice(0, 120), now).run();
+        await acquireWikipedia(env, latestQuery);
+        sources = await findKnowledge(env, latestQuery);
+      }
+    }
+  } catch (error) {
+    console.warn("Automatic knowledge acquisition unavailable; continuing without external context:", error);
+    sources = [];
+  }
+  const cleanMessages = messages.slice(-20).map(message => ({ role: message.role, content: message.content }));
+  const taskMessages = [{ role: "system", content: SYSTEM_PROMPT + knowledgeContext(sources) }, ...cleanMessages];
   const firstUser = messages.find(m => m.role === "user")?.content || "New conversation";
   const title = firstUser.slice(0, 72);
   await env.DB.prepare("INSERT INTO conversations (id, title, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET messages_json = excluded.messages_json, updated_at = excluded.updated_at")
@@ -25,7 +43,7 @@ export async function onRequestPost({ request, env }: Context): Promise<Response
     .bind(taskId, conversationId, JSON.stringify(taskMessages), now, now).run();
   try {
     await dispatchInference(env, taskId);
-    return json({ taskId, status: "queued", conversationId }, 202);
+    return json({ taskId, status: "queued", conversationId, knowledgeSources: sources.map(source => ({ title: source.title, url: source.source_url, source: source.source_name })) }, 202);
   } catch (error) {
     console.error("Quantum dispatch failed:", error);
     await env.DB.prepare("UPDATE tasks SET status = 'failed', error = ?, updated_at = ? WHERE id = ?").bind("The model job could not be queued. Check the Quantum GitHub connection.", now, taskId).run();

@@ -49,12 +49,17 @@ jobs:
           {"messages":[{"role":"user","content":"What color is a clear daytime sky?"},{"role":"assistant","content":"A clear daytime sky usually appears blue."}]}
           {"messages":[{"role":"user","content":"How many days are in a standard week?"},{"role":"assistant","content":"A standard week has seven days."}]}
           JSONL
-          cat > training-test/train.txt <<'TEXT'
-          Two plus two equals four.
-          Paris is the capital of France.
-          A clear daytime sky usually appears blue.
-          A standard week has seven days.
-          TEXT
+          python3 - <<'PY'
+          sentences = [
+              "Two plus two equals four.",
+              "Paris is the capital of France.",
+              "A clear daytime sky usually appears blue.",
+              "A standard week has seven days."
+          ]
+          with open("training-test/train.txt", "w", encoding="utf-8") as output:
+              output.write("\\n".join(sentences * 256))
+          print("Prepared", sum(len(line.split()) for line in sentences) * 256, "training words.")
+          PY
       - name: Run LoRA fine-tuning, checkpoint, resume, and adapter load
         working-directory: llama.cpp
         run: |

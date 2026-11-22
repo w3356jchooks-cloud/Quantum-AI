@@ -215,7 +215,6 @@ ui.authForm.addEventListener("submit", async event => {
     ui.authError.textContent = (error as Error).message;
   } finally { ui.authSubmit.disabled = false; }
 });
-ui.load; // Keep the interface's controls initialized before event handlers.
 ui.form.addEventListener("submit", event => { event.preventDefault(); void send(ui.prompt.value); });
 ui.prompt.addEventListener("input", () => {
   ui.prompt.style.height = "auto";
@@ -242,13 +241,19 @@ $("open-system").addEventListener("click", () => {
     } catch (error) { showDialog("System status", [(error as Error).message]); }
   })();
 });
-$("settings-button").addEventListener("click", () => showDialog("Quantum settings", [
-  "Model: SmolLM2-135M-Instruct (Q8_0 inference tag).",
-  "Compute: GitHub Actions standard CPU runners.",
-  "Storage: Cloud D1 conversation and task records.",
-  "Authentication: private access code with a short-lived signed session.",
-  "Sign out to end this browser session."
-]));
+$("settings-button").addEventListener("click", () => {
+  showDialog("Quantum settings", [
+    "Model: SmolLM2-135M-Instruct (Q8_0 inference tag).",
+    "Compute: GitHub Actions standard CPU runners.",
+    "Storage: Cloud D1 conversation and task records.",
+    "Authentication: private access code with a short-lived signed session."
+  ]);
+  const signOutButton = document.createElement("button");
+  signOutButton.className = "dialog-action danger";
+  signOutButton.textContent = "Sign out";
+  signOutButton.addEventListener("click", () => { ui.dialog.close(); signOut(); });
+  ui.dialogContent.append(signOutButton);
+});
 $("dialog-close").addEventListener("click", () => ui.dialog.close());
 document.querySelectorAll<HTMLButtonElement>(".suggestion").forEach(button => {
   button.addEventListener("click", () => void send(button.dataset.prompt || ""));

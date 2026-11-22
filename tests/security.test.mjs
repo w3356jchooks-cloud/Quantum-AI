@@ -19,7 +19,8 @@ test("signed browser sessions verify and tampering is rejected", async () => {
     headers: { authorization: "Bearer " + token }
   });
   assert.equal(await requireSession(request, { SESSION_SECRET: secret }), null);
-  const changed = token.slice(0, -1) + (token.endsWith("a") ? "b" : "a");
+  const [payload, signature] = token.split(".");
+  const changed = payload + "." + (signature[0] === "A" ? "B" : "A") + signature.slice(1);
   const invalid = new Request("https://quantum.test/api/conversations", {
     headers: { authorization: "Bearer " + changed }
   });

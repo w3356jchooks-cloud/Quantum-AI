@@ -4,7 +4,7 @@ Quantum is a cloud-connected AI application. The browser is a lightweight interf
 
 ## Current implementation
 
-- **Model:** SmolLM2-135M-Instruct, using the Ollama registry tag `smollm2:135m-instruct-q8_0`.
+- **Model:** SmolLM2-135M-Instruct, using the Ollama registry tag `smollm2:135m-instruct-q8_0`, pinned to manifest digest `2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9`. Each inference job verifies the digest before loading the model.
 - **Inference:** A dedicated GitHub Actions workflow starts Ollama, acquires the selected model, generates a response, and sends the result back to the Cloudflare Pages API.
 - **Gateway:** Cloudflare Pages Functions provide same-origin API routes. A repository-scoped GitHub App installation token is generated server-side and never exposed to the browser.
 - **Authentication:** A private access code is exchanged for a seven-day HMAC-signed session. Access and signing secrets stay server-side.

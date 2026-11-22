@@ -33,7 +33,7 @@ try {
 
   await page.locator("#open-system").click();
   await page.locator("#info-dialog").waitFor({ state: "visible" });
-  assert.match(await page.locator("#dialog-content").innerText(), /Quantum system status/);
+  assert.match(await page.locator("#dialog-title").innerText(), /Quantum system status/);
   await page.locator("#dialog-close").click();
 
   await page.locator("#settings-button").click();

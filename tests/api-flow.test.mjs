@@ -131,3 +131,19 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
     globalThis.fetch=originalFetch;
   }
 });
+
+test("sign-in endpoint rate-limits repeated invalid access codes",async()=>{
+  const rateEnv={...env,DB:new FakeD1()};
+  for(let i=0;i<10;i++){
+    const response=await authenticate({
+      request:jsonRequest("https://quantum.test/api/auth",{accessCode:"incorrect"},{ "cf-connecting-ip":"203.0.113.10" }),
+      env:rateEnv
+    });
+    assert.equal(response.status,401);
+  }
+  const blocked=await authenticate({
+    request:jsonRequest("https://quantum.test/api/auth",{accessCode:"incorrect"},{ "cf-connecting-ip":"203.0.113.10" }),
+    env:rateEnv
+  });
+  assert.equal(blocked.status,429);
+});

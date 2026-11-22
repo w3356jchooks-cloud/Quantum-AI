@@ -22,8 +22,8 @@ jobs:
         working-directory: llama.cpp
         run: |
           set -euo pipefail
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF
-          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-cli -j2
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=OFF -DLLAMA_BUILD_UI=OFF
+          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-perplexity -j2
       - name: Acquire the FP16 training model without Hugging Face
         shell: bash
         run: |
@@ -68,7 +68,7 @@ jobs:
           test -n "$CHECKPOINT"
           build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 256 -b 4 -ub 1 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
-          build/bin/llama-cli -m "$MODEL" --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf" -p "What is 2 plus 2?" -n 32 -t 4
+          build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 256 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
       - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
         working-directory: llama.cpp
         run: |

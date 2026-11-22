@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.functions.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".test-build",
+    "rootDir": ".",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["functions/**/*.ts"]
+}

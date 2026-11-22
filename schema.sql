@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   conversation_id TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'complete', 'failed')),
   messages_json TEXT NOT NULL,
+  sources_json TEXT NOT NULL DEFAULT '[]',
   answer TEXT,
   error TEXT,
   created_at INTEGER NOT NULL,

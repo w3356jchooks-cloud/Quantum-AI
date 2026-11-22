@@ -3,7 +3,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  actions: write
 jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
@@ -91,14 +90,6 @@ jobs:
           done
       - name: Deploy Quantum Pages and Functions
         run: npx --yes wrangler@4 pages deploy dist --project-name "$PROJECT_NAME" --branch main --config wrangler.toml
-      - name: Configure inference callback secrets in this repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-          QUANTUM_INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
-        run: |
-          set -euo pipefail
-          gh secret set QUANTUM_API_URL --repo "$GITHUB_REPOSITORY" --body "https://$PROJECT_NAME.pages.dev"
-          gh secret set QUANTUM_INTERNAL_API_SECRET --repo "$GITHUB_REPOSITORY" --body "$QUANTUM_INTERNAL_API_SECRET"
       - name: Verify deployed health endpoint
         run: |
           set -euo pipefail

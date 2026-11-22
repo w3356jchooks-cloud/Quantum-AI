@@ -20,7 +20,7 @@ const ui = {
   dialogContent: $("dialog-content")
 };
 let token = sessionStorage.getItem("quantum-session") || "";
-let conversationId = crypto.randomUUID();
+let conversationId: string = crypto.randomUUID();
 let messages: Message[] = [];
 let busy = false;
 

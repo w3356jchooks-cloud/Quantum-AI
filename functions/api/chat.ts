@@ -39,8 +39,9 @@ export async function onRequestPost({ request, env }: Context): Promise<Response
   const title = firstUser.slice(0, 72);
   await env.DB.prepare("INSERT INTO conversations (id, title, messages_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET messages_json = excluded.messages_json, updated_at = excluded.updated_at")
     .bind(conversationId, title, JSON.stringify(messages), now, now).run();
-  await env.DB.prepare("INSERT INTO tasks (id, conversation_id, status, messages_json, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, ?)")
-    .bind(taskId, conversationId, JSON.stringify(taskMessages), now, now).run();
+  const sourceRefs = sources.map(source => ({ title: source.title, url: source.source_url, source: source.source_name }));
+  await env.DB.prepare("INSERT INTO tasks (id, conversation_id, status, messages_json, sources_json, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?, ?, ?)")
+    .bind(taskId, conversationId, JSON.stringify(taskMessages), JSON.stringify(sourceRefs), now, now).run();
   try {
     await dispatchInference(env, taskId);
     return json({ taskId, status: "queued", conversationId, knowledgeSources: sources.map(source => ({ title: source.title, url: source.source_url, source: source.source_name })) }, 202);

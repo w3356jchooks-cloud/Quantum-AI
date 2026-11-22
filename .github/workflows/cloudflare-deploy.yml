@@ -86,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           for name in APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY; do
-            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT_NAME" --config wrangler.toml
+            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT_NAME" --config wrangler.toml --env production
           done
       - name: Deploy Quantum Pages and Functions
         run: npx --yes wrangler@4 pages deploy dist --project-name "$PROJECT_NAME" --branch main --config wrangler.toml

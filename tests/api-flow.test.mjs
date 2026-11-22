@@ -120,6 +120,8 @@ test("one complete gateway-to-workflow-callback conversation round trip", async 
     assert.equal(internalResponse.status,200);
     const internal=await internalResponse.json();
     assert.equal(internal.messages.at(-1).content,messages[0].content);
+    assert.match(internal.messages[0].content,/Quantum mechanics/);
+    assert.match(internal.messages[0].content,/untrusted data/);
     const callback=await completeTask({request:jsonRequest("https://quantum.test/api/internal/complete",{taskId,status:"complete",answer:"Hello from SmolLM2."},{authorization:"Bearer "+env.INTERNAL_API_SECRET}),env});
     assert.equal(callback.status,200);
     const taskResponse=await readTask({request:new Request("https://quantum.test/api/tasks/"+taskId,{headers:{authorization:"Bearer "+token}}),env,params:{id:taskId}});

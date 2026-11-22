@@ -144,7 +144,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 20); do
-            if curl -fsS "https://$PROJECT_NAME.pages.dev/api/health" | jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true' >/dev/null; then
+            if curl -fsS "https://$PROJECT_NAME.pages.dev/api/health" | jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true and .artifactsConfigured == true' >/dev/null; then
               echo "Quantum deployment health check passed."
               exit 0
             fi

@@ -167,10 +167,11 @@ async function send(raw: string): Promise<void> {
   ui.prompt.value = "";
   setBusy(true, "Sending your prompt to Quantum…");
   try {
-    const queued = await api<{ taskId: string; status: string }>("/api/chat", {
+    const queued = await api<{ taskId: string; status: string; knowledgeSources?: Array<{ title: string; url: string; source: string }> }>("/api/chat", {
       method: "POST",
       body: JSON.stringify({ conversationId, messages })
     });
+    if (queued.knowledgeSources?.length) banner("Using " + queued.knowledgeSources.length + " saved Wikipedia references for this answer…");
     const answer = await pollTask(queued.taskId);
     messages.push({ role: "assistant", content: answer });
     renderMessages();
@@ -186,6 +187,83 @@ async function send(raw: string): Promise<void> {
     setBusy(false);
     ui.prompt.focus();
   }
+}
+async function openKnowledge(): Promise<void> {
+  ui.dialogTitle.textContent = "Knowledge library";
+  ui.dialogContent.replaceChildren();
+  const intro = document.createElement("p");
+  intro.textContent = "Quantum can automatically acquire Wikipedia reference extracts when a prompt has no relevant saved knowledge. Add a topic here, or review and remove saved references. This is retrieval context, not model fine-tuning.";
+  const form = document.createElement("form");
+  form.className = "knowledge-form";
+  const input = document.createElement("input");
+  input.type = "search";
+  input.maxLength = 120;
+  input.placeholder = "Search a topic to acquire…";
+  input.required = true;
+  const acquire = document.createElement("button");
+  acquire.type = "submit";
+  acquire.className = "dialog-action";
+  acquire.textContent = "Acquire references";
+  form.append(input, acquire);
+  const notice = document.createElement("p");
+  notice.className = "knowledge-notice";
+  const list = document.createElement("div");
+  list.className = "knowledge-items";
+  ui.dialogContent.append(intro, form, notice, list);
+  const refresh = async () => {
+    const result = await api<{ knowledge: Array<{ id: string; title: string; source_url: string; source_name: string; created_at: number }> }>("/api/knowledge");
+    list.replaceChildren();
+    if (!result.knowledge.length) {
+      const empty = document.createElement("p");
+      empty.className = "knowledge-notice";
+      empty.textContent = "No references saved yet.";
+      list.append(empty);
+      return;
+    }
+    for (const item of result.knowledge) {
+      const row = document.createElement("div");
+      row.className = "knowledge-row";
+      const details = document.createElement("div");
+      details.className = "knowledge-details";
+      const link = document.createElement("a");
+      link.href = item.source_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = item.title;
+      const source = document.createElement("small");
+      source.textContent = item.source_name + " · Saved reference";
+      details.append(link, source);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "knowledge-remove";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", async () => {
+        remove.disabled = true;
+        try { await api("/api/knowledge/" + encodeURIComponent(item.id), { method: "DELETE" }); await refresh(); }
+        catch (error) { notice.textContent = (error as Error).message; remove.disabled = false; }
+      });
+      row.append(details, remove);
+      list.append(row);
+    }
+  };
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    acquire.disabled = true;
+    acquire.textContent = "Acquiring…";
+    notice.textContent = "Searching Wikipedia and validating usable page extracts…";
+    try {
+      const result = await api<{ count: number; acquired: Array<{ title: string }> }>("/api/knowledge", {
+        method: "POST", body: JSON.stringify({ query: input.value })
+      });
+      notice.textContent = result.count ? "Acquired " + result.count + " reference(s)." : "No suitable article extracts were found for that topic.";
+      input.value = "";
+      await refresh();
+    } catch (error) { notice.textContent = (error as Error).message; }
+    finally { acquire.disabled = false; acquire.textContent = "Acquire references"; }
+  });
+  try { await refresh(); }
+  catch (error) { notice.textContent = (error as Error).message; }
+  if (!ui.dialog.open) ui.dialog.showModal();
 }
 ui.authForm.addEventListener("submit", async event => {
   event.preventDefault();
@@ -224,6 +302,7 @@ ui.prompt.addEventListener("keydown", event => {
 $("new-chat").addEventListener("click", newChat);
 $("open-chat").addEventListener("click", () => { renderMessages(); ui.prompt.focus(); });
 $("open-history").addEventListener("click", () => { void loadConversations().catch(e => banner((e as Error).message)); });
+$("open-knowledge").addEventListener("click", () => { void openKnowledge(); });
 $("open-system").addEventListener("click", () => {
   void (async () => {
     try {

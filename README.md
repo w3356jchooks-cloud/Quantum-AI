@@ -16,7 +16,7 @@ No Hugging Face account, token, repository, or runtime dependency is used.
 
 ## Cloudflare deployment bootstrap
 
-A deployment workflow is included so you do not have to create the Pages project or databases manually. Add the following **GitHub Actions repository secrets** once. First run **Actions → Bootstrap and deploy Quantum on Cloudflare** from `quantum-cloud-migration` to create an isolated preview deployment and run the complete acceptance test; after it passes, merge the pull request and run the same workflow from `main` for production.
+A deployment workflow is included so you do not have to create the Pages project or databases manually. Add the following **GitHub Actions repository secrets** once. A guarded commit containing `[quantum-preview]` on `quantum-cloud-migration` triggers the isolated preview deployment and complete acceptance test; ordinary branch pushes do not deploy. After preview passes, merge the pull request and run **Actions → Bootstrap and deploy Quantum on Cloudflare** from `main` for production.
 
 | GitHub Actions secret | Purpose |
 | --- | --- |

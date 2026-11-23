@@ -67,7 +67,7 @@ Cloudflare Pages assets are assembled in `dist/`. Pages Functions are loaded fro
 
 The remote chat path, secure gateway, authentication, conversation storage, initial Wikipedia retrieval, and deployment bootstrap are implemented in this branch.
 
-**Not yet production-validated:** LoRA fine-tuning, full fine-tuning, checkpoint handoff/resume on the selected model, training evaluation and model promotion, R2 model/checkpoint mirroring, and broad multi-source web acquisition. A CPU LoRA feasibility experiment is in progress; the first attempt hit a graph-size assertion, so no training feature will be exposed as working until a corrected run proves it. The full fine-tuning path is also still unverified.
+**Not yet production-validated:** LoRA fine-tuning, full fine-tuning, and checkpoint resume on the selected model. Durable R2 checkpoint handoff, training evaluation, automatic model promotion, and broad multi-source acquisition are not implemented yet. The base Q8 inference model and FP16 training model are mirrored to private R2. A CPU LoRA feasibility experiment is running; no training feature will be exposed as working until the corrected test proves it.
 
 The bootstrap workflow mirrors the Q8 inference model and FP16 training model into a private R2 bucket and records SHA-256 checksums plus the Ollama manifest digests. Each inference job reads the active model manifest from R2 and verifies the downloaded model checksum before loading it. GitHub runner queue time and cold-start time depend on GitHub availability.
 

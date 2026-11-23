@@ -75,7 +75,8 @@ test("GitHub App PKCS#1 key signs a JWT and dispatches only the Quantum workflow
     assert.match(calls[1].url, /w3356jchooks-cloud\/Quantum-AI\/actions\/workflows\/quantum-inference.yml\/dispatches$/);
     assert.match(calls[1].init.headers.authorization, /temporary-installation-token/);
     assert.deepEqual(JSON.parse(calls[1].init.body), {
-      ref: "main", inputs: { task_id: "test-task-123" }
+      ref: "main",
+      inputs: { task_id: "test-task-123", api_url: "https://quantum-ai-w3356jchooks.pages.dev" }
     });
     const permissions = JSON.parse(calls[0].init.body);
     assert.deepEqual(permissions.permissions, { actions: "write" });

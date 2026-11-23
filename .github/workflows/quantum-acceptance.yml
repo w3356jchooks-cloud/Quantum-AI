@@ -1,18 +1,26 @@
 name: Quantum end-to-end acceptance test
 on:
-  workflow_run:
-    workflows: ["Bootstrap and deploy Quantum on Cloudflare"]
-    types: [completed]
+  workflow_call:
+    inputs:
+      api_url:
+        description: "Deployed Quantum API origin to validate"
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Deployed Quantum API origin to validate"
+        required: true
+        type: string
+        default: "https://quantum-ai-w3356jchooks.pages.dev"
 permissions:
   contents: read
 jobs:
   acceptance:
-    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      QUANTUM_API_URL: https://quantum-ai-w3356jchooks.pages.dev
+      QUANTUM_API_URL: ${{ inputs.api_url }}
       APP_ACCESS_CODE: ${{ secrets.APP_ACCESS_CODE }}
     steps:
       - name: Check out Quantum acceptance tests

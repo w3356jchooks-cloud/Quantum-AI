@@ -9,6 +9,7 @@ import { onRequestGet as readTask } from "../.test-build/functions/api/tasks/[id
 import { onRequestGet as listConversations } from "../.test-build/functions/api/conversations.js";
 import { onRequestGet as readConversation } from "../.test-build/functions/api/conversations/[id].js";
 import { onRequestGet as readHealth } from "../.test-build/functions/api/health.js";
+import { issueSession } from "../.test-build/functions/_shared.js";
 
 class FakeD1 {
   conversations = new Map();
@@ -23,6 +24,12 @@ class FakeD1 {
       async first() {
         if (sql.includes("COUNT(*) AS count FROM auth_attempts")) {
           return { count: db.attempts.filter(x => x.ip_hash === values[0] && x.created_at > values[1]).length };
+        }
+        if (sql.includes("COUNT(*) AS count FROM tasks WHERE status IN")) {
+          return { count: [...db.tasks.values()].filter(task => ["queued","running"].includes(task.status)).length };
+        }
+        if (sql.includes("COUNT(*) AS count FROM tasks WHERE created_at >")) {
+          return { count: [...db.tasks.values()].filter(task => task.created_at > values[0]).length };
         }
         if (sql.includes("FROM tasks WHERE id = ?")) {
           const task = db.tasks.get(values[0]);
@@ -49,7 +56,12 @@ class FakeD1 {
         return { results: [] };
       },
       async run() {
-        if (sql.startsWith("INSERT INTO auth_attempts")) db.attempts.push({ ip_hash: values[0], created_at: values[1] });
+        if (sql.startsWith("UPDATE tasks SET status = 'failed'")) {
+          const [error, updated_at, cutoff] = values;
+          for (const task of db.tasks.values()) {
+            if (["queued","running"].includes(task.status) && task.updated_at < cutoff) Object.assign(task,{status:"failed",error,updated_at});
+          }
+        } else if (sql.startsWith("INSERT INTO auth_attempts")) db.attempts.push({ ip_hash: values[0], created_at: values[1] });
         else if (sql.startsWith("DELETE FROM auth_attempts")) db.attempts = db.attempts.filter(x => x.created_at >= values[0]);
         else if (sql.startsWith("INSERT INTO conversations")) {
           const [id,title,messages_json,created_at,updated_at] = values;
@@ -182,4 +194,36 @@ test("health readiness requires the matching production or preview inference tar
   const result = await mismatch.json();
   assert.equal(result.status, "setup_required");
   assert.equal(result.inferenceConfigured, false);
+});
+
+test("chat gateway limits concurrent and per-minute inference dispatches", async () => {
+  const token = await issueSession(env.SESSION_SECRET);
+  const now = Math.floor(Date.now() / 1000);
+  const activeDb = new FakeD1();
+  for (let i = 0; i < 2; i++) {
+    activeDb.tasks.set("active-" + i, { id:"active-" + i, status:"running", created_at:now, updated_at:now });
+  }
+  const activeResponse = await createChat({
+    request: jsonRequest("https://quantum.test/api/chat", {
+      conversationId:"123e4567-e89b-12d3-a456-426614174099",
+      messages:[{role:"user",content:"Explain quantum mechanics."}]
+    }, { authorization:"Bearer " + token }),
+    env:{ ...env, DB:activeDb }
+  });
+  assert.equal(activeResponse.status,429);
+  assert.match((await activeResponse.json()).error,/two active inference jobs/);
+
+  const recentDb = new FakeD1();
+  for (let i = 0; i < 10; i++) {
+    recentDb.tasks.set("recent-" + i, { id:"recent-" + i, status:"complete", created_at:now, updated_at:now });
+  }
+  const recentResponse = await createChat({
+    request: jsonRequest("https://quantum.test/api/chat", {
+      conversationId:"123e4567-e89b-12d3-a456-426614174098",
+      messages:[{role:"user",content:"Explain quantum mechanics."}]
+    }, { authorization:"Bearer " + token }),
+    env:{ ...env, DB:recentDb }
+  });
+  assert.equal(recentResponse.status,429);
+  assert.match((await recentResponse.json()).error,/ten prompts per minute/);
 });

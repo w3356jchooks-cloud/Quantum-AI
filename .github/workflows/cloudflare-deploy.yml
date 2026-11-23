@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/quantum-cloud-migration'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -19,7 +19,13 @@ jobs:
       GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
       PROJECT_NAME: quantum-ai-w3356jchooks
       DATABASE_NAME: quantum-ai
+      PREVIEW_DATABASE_NAME: quantum-ai-preview
       R2_BUCKET_NAME: quantum-ai-artifacts
+      DEPLOY_BRANCH: ${{ github.ref_name }}
+      DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }}
+      DEPLOY_URL: ${{ github.ref == 'refs/heads/main' && 'https://quantum-ai-w3356jchooks.pages.dev' || 'https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev' }}
+      INFERENCE_WORKFLOW_REF: ${{ github.ref_name }}
+      INFERENCE_API_URL: ${{ github.ref == 'refs/heads/main' && 'https://quantum-ai-w3356jchooks.pages.dev' || 'https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev' }}
     steps:
       - name: Check out Quantum
         uses: actions/checkout@v4
@@ -57,6 +63,20 @@ jobs:
           fi
           test -n "$database_id"
           echo "database_id=$database_id" >> "$GITHUB_OUTPUT"
+      - name: Find or create preview D1 database
+        id: preview_d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database")
+          database_id=$(jq -r --arg name "$PREVIEW_DATABASE_NAME" '.result[]? | select(.name == $name) | .uuid' <<<"$response" | head -n1)
+          if [ -z "$database_id" ]; then
+            created=$(curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database" --data "$(jq -n --arg name "$PREVIEW_DATABASE_NAME" '{name:$name}')")
+            database_id=$(jq -r '.result.uuid // empty' <<<"$created")
+          fi
+          test -n "$database_id"
+          echo "database_id=$database_id" >> "$GITHUB_OUTPUT"
       - name: Find or create private R2 artifact bucket
         shell: bash
         run: |
@@ -79,9 +99,10 @@ jobs:
             curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
               --data "$(jq -n --arg name "$PROJECT_NAME" '{name:$name,production_branch:"main"}')" >/dev/null
           fi
-      - name: Bind D1 and apply the database schema
+      - name: Bind production and preview D1/R2 resources and apply schemas
         env:
           D1_DATABASE_ID: ${{ steps.d1.outputs.database_id }}
+          PREVIEW_D1_DATABASE_ID: ${{ steps.preview_d1.outputs.database_id }}
         run: |
           cat > wrangler.toml <<EOF
           name = "$PROJECT_NAME"
@@ -95,8 +116,17 @@ jobs:
           [[r2_buckets]]
           binding = "ARTIFACTS"
           bucket_name = "$R2_BUCKET_NAME"
+          [env.preview]
+          [[env.preview.d1_databases]]
+          binding = "DB"
+          database_name = "$PREVIEW_DATABASE_NAME"
+          database_id = "$PREVIEW_D1_DATABASE_ID"
+          [[env.preview.r2_buckets]]
+          binding = "ARTIFACTS"
+          bucket_name = "$R2_BUCKET_NAME"
           EOF
           npx --yes wrangler@4 d1 execute "$DATABASE_NAME" --remote --file schema.sql --config wrangler.toml
+          npx --yes wrangler@4 d1 execute "$PREVIEW_DATABASE_NAME" --remote --file schema.sql --config wrangler.toml --env preview
       - name: Mirror verified model artifacts into private R2
         shell: bash
         run: |
@@ -140,24 +170,30 @@ jobs:
           npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-r2-active.json --remote --config wrangler.toml
           jq -e '.model == "models/base/smollm2-135m-instruct-q8_0.gguf" and .model_sha256 != null and .training_model != null' /tmp/quantum-r2-active.json >/dev/null
           echo "PASS: private R2 read-after-write and active model manifest verification."
-      - name: Upload production secrets to Cloudflare Pages
+      - name: Upload environment-specific secrets to Cloudflare Pages
         shell: bash
         run: |
           set -euo pipefail
-          for name in APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY; do
-            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT_NAME" --config wrangler.toml --env production
+          for name in APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY INFERENCE_WORKFLOW_REF INFERENCE_API_URL; do
+            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT_NAME" --config wrangler.toml --env "$DEPLOY_ENV"
           done
       - name: Deploy Quantum Pages and Functions
-        run: npx --yes wrangler@4 pages deploy dist --project-name "$PROJECT_NAME" --branch main --config wrangler.toml
-      - name: Verify deployed health endpoint
+        run: npx --yes wrangler@4 pages deploy dist --project-name "$PROJECT_NAME" --branch "$DEPLOY_BRANCH" --config wrangler.toml
+      - name: Verify deployed environment health endpoint
         run: |
           set -euo pipefail
           for attempt in $(seq 1 20); do
-            if curl -fsS "https://$PROJECT_NAME.pages.dev/api/health" | jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true and .artifactsConfigured == true' >/dev/null; then
-              echo "Quantum deployment health check passed."
+            if curl -fsS "$DEPLOY_URL/api/health" | jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true and .artifactsConfigured == true' >/dev/null; then
+              echo "Quantum deployment health check passed at $DEPLOY_URL."
               exit 0
             fi
             sleep 10
           done
-          echo "::error::Cloudflare deployment did not pass its health check."
+          echo "::error::Quantum deployment did not pass its health check at $DEPLOY_URL."
           exit 1
+  acceptance:
+    needs: deploy
+    uses: ./.github/workflows/quantum-acceptance.yml
+    with:
+      api_url: ${{ github.ref == 'refs/heads/main' && 'https://quantum-ai-w3356jchooks.pages.dev' || 'https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev' }}
+    secrets: inherit

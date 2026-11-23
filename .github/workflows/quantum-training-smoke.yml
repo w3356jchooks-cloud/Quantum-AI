@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
-          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-perplexity llama-server -j2
+          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-perplexity llama-cli -j2
       - name: Acquire the FP16 training model without Hugging Face
         shell: bash
         run: |
@@ -88,27 +88,15 @@ jobs:
           test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 512 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
           MODEL_Q8="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-q8.gguf"
-          build/bin/llama-server -m "$MODEL_Q8" --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf" -c 8192 -t 4 --host 127.0.0.1 --port 8080 > "$GITHUB_WORKSPACE/training-test/llama-server.log" 2>&1 &
-          SERVER_PID=$!
-          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 90); do
-            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then break; fi
-            sleep 2
-          done
-          curl -fsS http://127.0.0.1:8080/health >/dev/null
+          build/bin/llama-cli -m "$MODEL_Q8" --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf" -c 2048 -t 4 -n 48 --temp 0.7 --no-display-prompt -p "Reply with a short greeting." > "$GITHUB_WORKSPACE/training-test/lora-response.txt" 2> "$GITHUB_WORKSPACE/training-test/lora-cli.log"
           python3 - <<'PY'
-          import json, urllib.request
-          payload=json.dumps({"model":"smollm2","messages":[{"role":"user","content":"Reply with a short greeting."}],"max_tokens":48,"temperature":0.7}).encode()
-          req=urllib.request.Request("http://127.0.0.1:8080/v1/chat/completions",data=payload,headers={"Content-Type":"application/json"},method="POST")
-          with urllib.request.urlopen(req,timeout=600) as response:
-              result=json.loads(response.read())
-          answer=result.get("choices",[{}])[0].get("message",{}).get("content","").strip()
-          if not answer: raise SystemExit("LoRA-enabled llama.cpp server returned an empty response")
-          print("PASS: llama.cpp server loaded the trained GGUF adapter on the Q8 inference model.")
-          print(answer)
+          from pathlib import Path
+          answer=Path("training-test/lora-response.txt").read_text(encoding="utf-8").strip()
+          if not answer:
+              raise SystemExit("LoRA-enabled llama.cpp CLI returned an empty response")
+          print("PASS: llama.cpp CLI loaded the trained GGUF adapter on the Q8 inference model and generated text.")
+          print(answer[:500])
           PY
-          kill "$SERVER_PID" 2>/dev/null || true
-          trap - EXIT
       - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
         working-directory: llama.cpp
         run: |

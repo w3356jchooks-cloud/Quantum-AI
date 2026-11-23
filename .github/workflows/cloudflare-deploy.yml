@@ -1,11 +1,13 @@
 name: Bootstrap and deploy Quantum on Cloudflare
 on:
+  push:
+    branches: [quantum-cloud-migration]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/quantum-cloud-migration'
+    if: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') || (github.ref == 'refs/heads/quantum-cloud-migration' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[quantum-preview]'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

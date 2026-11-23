@@ -114,8 +114,8 @@ function signOut(): void {
 }
 async function checkHealth(): Promise<void> {
   try {
-    const health = await api<{ status: string; database: string; model: string; inference: string; githubConfigured: boolean }>("/api/health");
-    const ready = health.status === "ok" && health.githubConfigured;
+    const health = await api<{ status: string; database: string; model: string; inference: string; githubConfigured: boolean; inferenceConfigured: boolean }>("/api/health");
+    const ready = health.status === "ok" && health.githubConfigured && health.inferenceConfigured;
     setStatus(ready ? "Gateway online · Model ready to queue" : "Gateway setup incomplete", ready);
     $("gpu-value").textContent = "GitHub Actions";
     $("gpu-sub").textContent = health.githubConfigured ? "Workflow dispatch connected" : "GitHub App credentials missing";
@@ -323,13 +323,14 @@ $("open-knowledge").addEventListener("click", () => { void openKnowledge(); });
 $("open-system").addEventListener("click", () => {
   void (async () => {
     try {
-      const health = await api<{ status: string; database: string; model: string; inference: string; githubConfigured: boolean }>("/api/health");
+      const health = await api<{ status: string; database: string; model: string; inference: string; githubConfigured: boolean; inferenceConfigured: boolean }>("/api/health");
       showDialog("Quantum system status", [
         "Gateway: " + health.status,
         "Database: " + health.database,
         "Model: " + health.model,
         "Inference: " + health.inference,
         "GitHub workflow: " + (health.githubConfigured ? "configured" : "not configured"),
+        "Inference target: " + (health.inferenceConfigured ? "configured" : "not configured"),
         "The model runs on a remote CPU runner. This device performs no model inference."
       ]);
     } catch (error) { showDialog("System status", [(error as Error).message]); }

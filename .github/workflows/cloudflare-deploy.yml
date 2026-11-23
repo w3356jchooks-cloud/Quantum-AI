@@ -131,6 +131,15 @@ jobs:
           npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/training/smollm2-135m-instruct-fp16.sha256" --file /tmp/quantum-fp16.sha256 --remote --content-type text/plain --config wrangler.toml
           npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-active.json --remote --content-type application/json --config wrangler.toml
           echo "Mirrored Q8_0 inference and FP16 training model assets into the private R2 bucket."
+      - name: Read back and verify the private R2 inference artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/models/base/smollm2-135m-instruct-q8_0.gguf" --file /tmp/quantum-r2-readback.gguf --remote --config wrangler.toml
+          printf '%s  %s\n' "$(cat /tmp/quantum-q8.sha256)" /tmp/quantum-r2-readback.gguf | sha256sum -c -
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-r2-active.json --remote --config wrangler.toml
+          jq -e '.model == "models/base/smollm2-135m-instruct-q8_0.gguf" and .model_sha256 != null and .training_model != null' /tmp/quantum-r2-active.json >/dev/null
+          echo "PASS: private R2 read-after-write and active model manifest verification."
       - name: Upload production secrets to Cloudflare Pages
         shell: bash
         run: |

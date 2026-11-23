@@ -41,6 +41,8 @@ The workflow then:
 7. Checks the deployed health endpoint, including the matching inference workflow target.
 8. Runs the complete automated acceptance test against that deployment.
 
+Before preview inference can be dispatched, merge the separate registration-only [PR #3](https://github.com/w3356jchooks-cloud/Quantum-AI/pull/3). It adds an inert default-branch workflow stub required by GitHub; the actual inference implementation still runs from the selected `quantum-cloud-migration` branch. The stub does not deploy the site, access secrets, or run a model.
+
 The production origin is `https://quantum-ai-w3356jchooks.pages.dev`; the preview branch alias is `https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev`. The workflow can deploy only `main` or `quantum-cloud-migration`. Preview uses its own D1 database and preview-only Pages secrets; both environments share the private R2 model artifacts. After either deployment, the **Quantum end-to-end acceptance test** runs automatically. It signs in, acquires a reference, dispatches the matching branch's real model workflow, waits for the SmolLM2 response, and verifies the callback, saved conversation, and source links. This is the single integrated acceptance test; no separate manual test sequence is intended.
 
 ## Build, type-check, and tests

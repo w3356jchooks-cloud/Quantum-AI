@@ -4,7 +4,7 @@ Quantum is a cloud-connected AI application. The browser is a lightweight interf
 
 ## Current implementation
 
-- **Model:** SmolLM2-135M-Instruct, using the Ollama registry tag `smollm2:135m-instruct-q8_0`, pinned to manifest digest `2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9`. Each inference job verifies the digest before loading the model.
+- **Model:** SmolLM2-135M-Instruct, acquired from the Ollama registry tag `smollm2:135m-instruct-q8_0`. The bootstrap verifies the pinned Ollama manifest digest `2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9`, then records the GGUF SHA-256 in the private R2 manifest; each inference job verifies that SHA-256 before loading the model.
 - **Inference:** A dedicated GitHub Actions workflow downloads the active GGUF model and optional LoRA adapter from private Cloudflare R2, verifies SHA-256 checksums, starts a pinned CPU `llama.cpp` server, generates a response, and sends the result back through the protected Cloudflare Pages API.
 - **Gateway:** Cloudflare Pages Functions provide same-origin API routes. A repository-scoped GitHub App installation token is generated server-side and never exposed to the browser.
 - **Authentication:** A private access code is exchanged for a seven-day HMAC-signed session. Access and signing secrets stay server-side.
@@ -37,7 +37,7 @@ The workflow then:
 3. Binds D1 as `DB` and applies `schema.sql`.
 4. Uploads the private application secrets to Cloudflare Pages.
 5. Builds and deploys the website and Pages Functions.
-6. Sets the inference callback secrets in GitHub Actions.
+6. Keeps the Cloudflare API token/account ID available to GitHub Actions for private R2 artifact reads; the same workflow uses them for provisioning.
 7. Checks the deployed health endpoint.
 
 The deployed origin is `https://quantum-ai-w3356jchooks.pages.dev`. The workflow is manual and restricted to `main`; it will not deploy this draft branch. After a successful deployment, the **Quantum end-to-end acceptance test** runs automatically. It signs in, acquires a reference, dispatches the real model workflow, waits for the SmolLM2 response, and verifies the callback, saved conversation, and source links. This is the single integrated acceptance test; no separate manual test sequence is intended.

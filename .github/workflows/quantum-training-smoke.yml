@@ -48,16 +48,21 @@ jobs:
           Q8_MODEL_PATH=$(awk '/^FROM / {print $2; exit}' /tmp/Quantum-Q8.Modelfile)
           test -s "$Q8_MODEL_PATH"
           cp "$Q8_MODEL_PATH" training-test/smollm2-135m-instruct-q8.gguf
-      - name: Prepare tiny synthetic training and evaluation data
+      - name: Prepare synthetic training data with multiple optimizer batches
         run: |
           mkdir -p training-test
-          cat > training-test/train.jsonl <<'JSONL'
-          {"messages":[{"role":"user","content":"What is 2 plus 2?"},{"role":"assistant","content":"2 plus 2 equals 4."}]}
-          {"messages":[{"role":"user","content":"What is the capital of France?"},{"role":"assistant","content":"Paris is the capital of France."}]}
-          {"messages":[{"role":"user","content":"What color is a clear daytime sky?"},{"role":"assistant","content":"A clear daytime sky usually appears blue."}]}
-          {"messages":[{"role":"user","content":"How many days are in a standard week?"},{"role":"assistant","content":"A standard week has seven days."}]}
-          JSONL
           python3 - <<'PY'
+          import json
+          examples = [
+              [{"role":"user","content":"What is 2 plus 2?"},{"role":"assistant","content":"Two plus two equals four. Addition combines quantities. The answer is four."}],
+              [{"role":"user","content":"What is the capital of France?"},{"role":"assistant","content":"Paris is the capital of France. It is a major European city and the country's political center."}],
+              [{"role":"user","content":"What color is a clear daytime sky?"},{"role":"assistant","content":"A clear daytime sky usually appears blue because air molecules scatter shorter blue wavelengths more strongly."}],
+              [{"role":"user","content":"How many days are in a standard week?"},{"role":"assistant","content":"A standard week has seven days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, and Sunday."}]
+          ]
+          with open("training-test/train.jsonl", "w", encoding="utf-8") as output:
+              for _ in range(32):
+                  for messages in examples:
+                      output.write(json.dumps({"messages": messages}) + "\n")
           sentences = [
               "Two plus two equals four.",
               "Paris is the capital of France.",
@@ -66,7 +71,7 @@ jobs:
           ]
           with open("training-test/train.txt", "w", encoding="utf-8") as output:
               output.write("\n".join(sentences * 128))
-          print("Prepared", sum(len(line.split()) for line in sentences) * 128, "training words.")
+          print("Prepared", len(examples) * 32, "JSONL conversations and", sum(len(line.split()) for line in sentences) * 128, "plain-text training words.")
           PY
       - name: Run LoRA fine-tuning, checkpoint, resume, and adapter load
         working-directory: llama.cpp

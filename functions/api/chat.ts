@@ -16,7 +16,14 @@ export async function onRequestPost({ request, env }: Context): Promise<Response
     total += message.content.length;
   }
   if (total > 32_000 || messages[messages.length - 1].role !== "user") return json({ error: "Conversation is too large or the latest message is not from the user." }, 400);
-  const taskId = crypto.randomUUID(), now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare("UPDATE tasks SET status = 'failed', error = ?, updated_at = ? WHERE status IN ('queued', 'running') AND updated_at < ?")
+    .bind("Inference timed out before completion.", now, now - 2700).run();
+  const activeTasks = await env.DB.prepare("SELECT COUNT(*) AS count FROM tasks WHERE status IN ('queued', 'running')").first<{ count: number }>();
+  if ((activeTasks?.count || 0) >= 2) return json({ error: "Quantum already has two active inference jobs. Wait for one to finish." }, 429);
+  const recentTasks = await env.DB.prepare("SELECT COUNT(*) AS count FROM tasks WHERE created_at > ?").bind(now - 60).first<{ count: number }>();
+  if ((recentTasks?.count || 0) >= 10) return json({ error: "Quantum chat is limited to ten prompts per minute." }, 429);
+  const taskId = crypto.randomUUID();
   const latestQuery = messages[messages.length - 1].content;
   let sources: KnowledgeSource[] = [];
   try {

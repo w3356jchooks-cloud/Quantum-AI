@@ -1,18 +1,16 @@
-name: Compile Quantum TypeScript
-
+name: Quantum build and type checks
 on:
   push:
+    branches: [main, quantum-cloud-migration]
+  pull_request:
     branches: [main]
-    paths:
-      - "src/**/*.ts"
-      - "tsconfig*.json"
-      - ".github/workflows/compile-typescript.yml"
-
 permissions:
-  contents: write
-
+  contents: read
+concurrency:
+  group: quantum-ci-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
 jobs:
-  compile:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -21,18 +19,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Compile TypeScript
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Type-check app and Pages Functions
+        run: npm run typecheck
+      - name: Validate D1 schema SQL
+        run: python3 -c "import sqlite3; db=sqlite3.connect(':memory:'); db.executescript(open('schema.sql').read()); print('D1 schema SQL is valid.')"
+      - name: Run security and integration unit tests
+        run: npm test
+      - name: Build browser application
+        run: npm run build
+      - name: Verify deployable Pages output
         run: |
-          npm install --global typescript@5.8.3
-          tsc -p tsconfig.app.json
-          tsc -p tsconfig.worker.json
-      - name: Commit browser JavaScript
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/app.js src/engine.worker.js
-          if ! git diff --cached --quiet; then
-            git commit -m "Build browser JavaScript from TypeScript"
-            git pull --rebase origin main
-            git push
-          fi
+          test -s dist/index.html
+          test -s dist/styles.css
+          test -s dist/src/app.js
+          test -s dist/_headers
+          ! grep -R -i -E 'hugging.?face|transformers\.js|onnxruntime' dist

@@ -1,176 +1,371 @@
-type Role = "system" | "user" | "assistant";
-type Message = { role: Role; content: string };
-type Reply = { type: string; text?: string; content?: string; error?: string; backend?: string };
-const DB = "quantum-local";
-const SYSTEM = "You are Quantum, a helpful and thoughtful AI. Be accurate, clear, and honest about uncertainty.";
+type Role = "user" | "assistant";
+type SourceLink = { title: string; url: string; source: string };
+type Message = { role: Role; content: string; sources?: SourceLink[] };
+type Conversation = { id: string; title: string; updated_at: number };
+type ApiError = { error?: string };
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
   if (!el) throw new Error("Missing UI element: #" + id);
   return el as T;
 };
 const ui = {
+  gate: $("auth-gate"), authForm: $("auth-form") as HTMLFormElement,
+  accessCode: $("access-code") as HTMLInputElement, authError: $("auth-error"),
+  authSubmit: $("auth-submit") as HTMLButtonElement,
   welcome: $("welcome"), chat: $("chat-area"), messages: $("messages"),
-  load: $("load-model") as HTMLButtonElement, note: $("load-note"), status: $("status-label"),
-  dot: $("status-dot"), banner: $("engine-banner"), bannerText: $("engine-message"),
+  status: $("status-label"), dot: $("status-dot"),
+  banner: $("engine-banner"), bannerText: $("engine-message"),
   form: $("chat-form") as HTMLFormElement, prompt: $("prompt") as HTMLTextAreaElement,
-  send: $("send-button") as HTMLButtonElement, dialog: $("info-dialog") as HTMLDialogElement,
-  dialogTitle: $("dialog-title"), dialogContent: $("dialog-content"),
+  send: $("send-button") as HTMLButtonElement, historyList: $("history-list"),
+  dialog: $("info-dialog") as HTMLDialogElement, dialogTitle: $("dialog-title"),
+  dialogContent: $("dialog-content")
 };
-let worker: Worker | null = null;
-let ready = false;
-let busy = false;
-let pendingPrompt: string | null = null;
-let backend = "Not initialized";
+let token = sessionStorage.getItem("quantum-session") || "";
 let conversationId: string = crypto.randomUUID();
-let saved: Message[] = [];
-let history: Message[] = [{ role: "system", content: SYSTEM }];
-let answerNode: HTMLElement | null = null;
+let messages: Message[] = [];
+let busy = false;
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("conversations")) db.createObjectStore("conversations", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("knowledge")) db.createObjectStore("knowledge", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("training")) db.createObjectStore("training", { keyPath: "id" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error("IndexedDB unavailable"));
-  });
+async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers || {});
+  headers.set("content-type", "application/json");
+  if (token) headers.set("authorization", "Bearer " + token);
+  const response = await fetch(path, { ...init, headers, cache: "no-store" });
+  const data = await response.json().catch(() => ({})) as T & ApiError;
+  if (!response.ok) {
+    if (response.status === 401 && token) signOut();
+    throw new Error(data.error || "Quantum API request failed (" + response.status + ").");
+  }
+  return data;
 }
-async function all<T>(store: string): Promise<T[]> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const req = db.transaction(store).objectStore(store).getAll();
-    req.onsuccess = () => { const rows = req.result as T[]; db.close(); resolve(rows); };
-    req.onerror = () => { db.close(); reject(req.error); };
-  });
+function banner(text: string, visible = true): void {
+  ui.bannerText.textContent = text;
+  ui.banner.classList.toggle("visible", visible);
 }
-async function save(): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("conversations", "readwrite");
-    tx.objectStore("conversations").put({ id: conversationId, updatedAt: Date.now(), messages: saved });
-    tx.oncomplete = () => { db.close(); resolve(); };
-    tx.onerror = () => { db.close(); reject(tx.error); };
-  });
+function setStatus(text: string, online = false): void {
+  ui.status.textContent = text;
+  ui.dot.classList.toggle("ready", online);
 }
-function banner(text: string): void { ui.banner.classList.add("visible"); ui.bannerText.textContent = text; }
-function status(text: string, active = false): void { ui.status.textContent = text; ui.dot.classList.toggle("ready", active); }
-function busyState(value: boolean, text = ""): void {
-  busy = value; ui.prompt.disabled = value || !ready; ui.send.disabled = value || !ready;
-  ui.load.disabled = value || ready; ui.banner.classList.toggle("visible", value || !!text);
-  if (text) ui.bannerText.textContent = text;
-  else if (!value) ui.banner.classList.remove("visible");
+function setBusy(value: boolean, text = ""): void {
+  busy = value;
+  ui.prompt.disabled = value || !token;
+  ui.send.disabled = value || !token;
+  ui.authSubmit.disabled = value;
+  if (text) banner(text);
+  else if (!value) banner("", false);
 }
-function dialog(title: string, html: string): void {
-  ui.dialogTitle.textContent = title; ui.dialogContent.replaceChildren();
-  const content = document.createElement("div"); content.innerHTML = html; ui.dialogContent.append(content);
+function showDialog(title: string, lines: string[]): void {
+  ui.dialogTitle.textContent = title;
+  ui.dialogContent.replaceChildren();
+  for (const line of lines) {
+    const p = document.createElement("p");
+    p.textContent = line;
+    ui.dialogContent.append(p);
+  }
   if (!ui.dialog.open) ui.dialog.showModal();
 }
-function addMessage(role: "user" | "assistant", content: string, persist = true): HTMLElement {
-  const article = document.createElement("article"); article.className = "message " + role;
-  const avatar = document.createElement("div"); avatar.className = "avatar"; avatar.textContent = role === "user" ? "Y" : "Q";
-  const body = document.createElement("div"); body.className = "message-body";
-  const label = document.createElement("div"); label.className = "message-role"; label.textContent = role === "user" ? "YOU" : "QUANTUM";
-  const text = document.createElement("div"); text.className = "message-text"; text.textContent = content;
-  body.append(label, text); article.append(avatar, body); ui.messages.append(article);
-  ui.chat.classList.remove("hidden"); ui.welcome.classList.add("hidden"); ui.messages.scrollTop = ui.messages.scrollHeight;
-  if (persist) { saved.push({ role, content }); void save().catch(e => banner("Save failed: " + e.message)); }
-  return text;
+function renderMessages(): void {
+  ui.messages.replaceChildren();
+  for (const message of messages) {
+    const article = document.createElement("article");
+    article.className = "message " + message.role;
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = message.role === "user" ? "Y" : "Q";
+    const body = document.createElement("div");
+    body.className = "message-body";
+    const label = document.createElement("div");
+    label.className = "message-role";
+    label.textContent = message.role === "user" ? "YOU" : "QUANTUM";
+    const text = document.createElement("div");
+    text.className = "message-text";
+    text.textContent = message.content;
+    body.append(label, text);
+    if (message.role === "assistant" && message.sources?.length) {
+      const sourceList = document.createElement("div");
+      sourceList.className = "message-sources";
+      const sourceLabel = document.createElement("small");
+      sourceLabel.textContent = "REFERENCES";
+      sourceList.append(sourceLabel);
+      for (const source of message.sources) {
+        const link = document.createElement("a");
+        link.href = source.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = source.title;
+        sourceList.append(link);
+      }
+      body.append(sourceList);
+    }
+    article.append(avatar, body);
+    ui.messages.append(article);
+  }
+  ui.chat.classList.toggle("hidden", messages.length === 0);
+  ui.welcome.classList.toggle("hidden", messages.length > 0);
+  ui.messages.scrollTop = ui.messages.scrollHeight;
 }
-function initialize(): void {
-  if (ready || busy) return;
-  busyState(true, "Starting local model runtime…"); status("Preparing model");
+function signOut(): void {
+  token = "";
+  sessionStorage.removeItem("quantum-session");
+  ui.gate.classList.remove("hidden");
+  ui.accessCode.value = "";
+  ui.prompt.disabled = true;
+  ui.send.disabled = true;
+  setStatus("Signed out");
+}
+async function checkHealth(): Promise<void> {
   try {
-    worker = new Worker(new URL("./engine.worker.js?v=cpu-wasm-ts1", import.meta.url), { type: "module" });
-    worker.onmessage = (event: MessageEvent<Reply>) => {
-      const m = event.data;
-      if (m.type === "progress") banner(m.text || "Downloading model files…");
-      if (m.type === "ready") {
-        ready = true; backend = m.backend || "CPU · WASM"; status("Ready · " + backend, true);
-        ui.note.textContent = "Model cached by your browser after download."; busyState(false);
-        banner("Quantum is ready. Local inference: " + backend + ".");
-        const queued = pendingPrompt; pendingPrompt = null;
-        if (queued) void send(queued); else window.setTimeout(() => ui.banner.classList.remove("visible"), 4500);
-      }
-      if (m.type === "token" && answerNode) { answerNode.textContent += m.content || ""; ui.messages.scrollTop = ui.messages.scrollHeight; }
-      if (m.type === "complete") {
-        const answer = m.content || answerNode?.textContent || "";
-        history.push({ role: "assistant", content: answer }); saved.push({ role: "assistant", content: answer });
-        void save().catch(e => banner("Save failed: " + e.message)); answerNode = null; busyState(false);
-      }
-      if (m.type === "error") {
-        if (!ready) { status("Model unavailable"); pendingPrompt = null; ui.load.disabled = false; }
-        else if (answerNode) answerNode.textContent = "Generation failed: " + (m.error || "Unknown error");
-        answerNode = null; busyState(false); banner("Quantum error: " + (m.error || "Unknown error"));
-      }
-    };
-    worker.onerror = e => { ready = false; busyState(false); status("Worker error"); ui.load.disabled = false; banner(e.message || "Inference worker failed to start."); };
-    worker.postMessage({ type: "initialize" });
-  } catch (e) { busyState(false); status("Model unavailable"); ui.load.disabled = false; banner("Initialization failed: " + (e as Error).message); }
+    const health = await api<{ status: string; database: string; model: string; inference: string; githubConfigured: boolean; inferenceConfigured: boolean }>("/api/health");
+    const ready = health.status === "ok" && health.githubConfigured && health.inferenceConfigured;
+    setStatus(ready ? "Gateway online · Model ready to queue" : "Gateway setup incomplete", ready);
+    $("gpu-value").textContent = "GitHub Actions";
+    $("gpu-sub").textContent = health.githubConfigured ? "Workflow dispatch connected" : "GitHub App credentials missing";
+    $("storage-value").textContent = health.database;
+    $("storage-sub").textContent = "Cloud conversation and task records";
+    if (!ready) banner("Quantum cloud setup is incomplete. Finish the deployment configuration before sending prompts.");
+    return;
+  } catch (error) {
+    setStatus("Gateway unavailable");
+    banner((error as Error).message);
+  }
 }
-async function send(raw: string): Promise<void> {
-  const content = raw.trim(); if (!content || !ready || busy) return;
-  addMessage("user", content); ui.prompt.value = ""; ui.prompt.style.height = "auto";
-  history.push({ role: "user", content }); answerNode = addMessage("assistant", "", false);
-  busyState(true, "Thinking locally with " + backend + "…");
-  try { worker?.postMessage({ type: "generate", messages: history }); }
-  catch (e) { history.pop(); if (answerNode) answerNode.textContent = (e as Error).message; answerNode = null; busyState(false); }
+async function loadConversations(): Promise<void> {
+  const result = await api<{ conversations: Conversation[] }>("/api/conversations");
+  ui.historyList.replaceChildren();
+  for (const item of result.conversations) {
+    const button = document.createElement("button");
+    button.className = "history-item";
+    button.textContent = item.title || "Conversation";
+    button.title = item.title || "Conversation";
+    button.addEventListener("click", () => void restoreConversation(item.id));
+    ui.historyList.append(button);
+  }
+  if (result.conversations.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "No saved conversations yet";
+    ui.historyList.append(empty);
+  }
+  return;
+}
+async function restoreConversation(id: string): Promise<void> {
+  if (busy) return;
+  try {
+    const result = await api<{ id: string; messages: Message[] }>("/api/conversations/" + encodeURIComponent(id));
+    conversationId = result.id;
+    messages = result.messages || [];
+    renderMessages();
+    setStatus("Conversation restored", true);
+  } catch (error) { banner((error as Error).message); }
 }
 function newChat(): void {
-  conversationId = crypto.randomUUID(); saved = []; history = [{ role: "system", content: SYSTEM }];
-  ui.messages.replaceChildren(); ui.chat.classList.add("hidden"); ui.welcome.classList.remove("hidden");
-  ui.prompt.value = ""; ui.prompt.disabled = !ready; ui.send.disabled = !ready;
+  if (busy) return;
+  conversationId = crypto.randomUUID();
+  messages = [];
+  renderMessages();
+  ui.prompt.value = "";
+  ui.prompt.focus();
 }
-async function restore(): Promise<void> {
+async function pollTask(taskId: string): Promise<{ answer: string; sources: SourceLink[] }> {
+  for (let attempt = 0; attempt < 900; attempt++) {
+    await new Promise(resolve => window.setTimeout(resolve, 2000));
+    const task = await api<{ status: string; answer?: string; error?: string; sources?: SourceLink[] }>("/api/tasks/" + encodeURIComponent(taskId));
+    if (task.status === "complete") return { answer: task.answer || "", sources: task.sources || [] };
+    if (task.status === "failed") throw new Error(task.error || "The inference job failed.");
+    banner(task.status === "running" ? "SmolLM2 is generating a response on the remote CPU runner…" : "Waiting for a GitHub Actions runner…");
+  }
+  throw new Error("This job is taking longer than expected. Check System Status before retrying.");
+}
+async function send(raw: string): Promise<void> {
+  const content = raw.trim();
+  if (!content || busy || !token) return;
+  messages.push({ role: "user", content });
+  if (messages.length > 50) messages = messages.slice(-50);
+  renderMessages();
+  ui.prompt.value = "";
+  setBusy(true, "Sending your prompt to Quantum…");
   try {
-    const rows = await all<{ id: string; updatedAt: number; messages: Message[] }>("conversations");
-    rows.sort((a, b) => b.updatedAt - a.updatedAt); const last = rows[0]; if (!last) return;
-    conversationId = last.id; saved = last.messages || [];
-    for (const m of saved) addMessage(m.role as "user" | "assistant", m.content, false);
-    history = [{ role: "system", content: SYSTEM }, ...saved];
-  } catch (e) { banner("Could not restore chats: " + (e as Error).message); }
+    const queued = await api<{ taskId: string; status: string; knowledgeSources?: Array<{ title: string; url: string; source: string }> }>("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ conversationId, messages })
+    });
+    if (queued.knowledgeSources?.length) banner("Using " + queued.knowledgeSources.length + " saved Wikipedia references for this answer…");
+    const completed = await pollTask(queued.taskId);
+    messages.push({ role: "assistant", content: completed.answer, ...(completed.sources.length ? { sources: completed.sources } : {}) });
+    renderMessages();
+    setStatus("Response received · SmolLM2-135M", true);
+    await loadConversations();
+    banner("Quantum replied. Your conversation is saved in the cloud.");
+    window.setTimeout(() => { if (!busy) banner("", false); }, 5000);
+  } catch (error) {
+    const message = (error as Error).message;
+    banner(message);
+    showDialog("Quantum could not finish", [message, "Your previous messages remain in this conversation. You can retry when the gateway is ready."]);
+  } finally {
+    setBusy(false);
+    ui.prompt.focus();
+  }
 }
-async function memory(): Promise<void> {
-  const rows = await all<{ messages: Message[] }>("conversations"); const knowledge = await all<unknown>("knowledge");
-  const count = rows.reduce((n, r) => n + (r.messages?.length || 0), 0);
-  dialog("Local memory", "<p><b>" + rows.length + "</b> conversations · <b>" + count + "</b> messages</p><p><b>" + knowledge.length + "</b> knowledge records</p><p>All records are stored in this browser. Automatic web learning and fine-tuning are not implemented.</p><button class='dialog-action' id='export-memory'>Export conversations</button> <button class='dialog-action danger' id='clear-memory'>Clear conversations</button>");
-  $("export-memory").addEventListener("click", async () => {
-    const blob = new Blob([JSON.stringify(await all("conversations"), null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "quantum-conversations.json"; a.click(); URL.revokeObjectURL(url);
+async function openKnowledge(): Promise<void> {
+  ui.dialogTitle.textContent = "Knowledge library";
+  ui.dialogContent.replaceChildren();
+  const intro = document.createElement("p");
+  intro.textContent = "Quantum can automatically acquire Wikipedia reference extracts when a prompt has no relevant saved knowledge. Add a topic here, or review and remove saved references. This is retrieval context, not model fine-tuning.";
+  const form = document.createElement("form");
+  form.className = "knowledge-form";
+  const input = document.createElement("input");
+  input.type = "search";
+  input.maxLength = 120;
+  input.placeholder = "Search a topic to acquire…";
+  input.required = true;
+  const acquire = document.createElement("button");
+  acquire.type = "submit";
+  acquire.className = "dialog-action";
+  acquire.textContent = "Acquire references";
+  form.append(input, acquire);
+  const notice = document.createElement("p");
+  notice.className = "knowledge-notice";
+  const list = document.createElement("div");
+  list.className = "knowledge-items";
+  ui.dialogContent.append(intro, form, notice, list);
+  const refresh = async () => {
+    const result = await api<{ knowledge: Array<{ id: string; title: string; source_url: string; source_name: string; created_at: number }> }>("/api/knowledge");
+    list.replaceChildren();
+    if (!result.knowledge.length) {
+      const empty = document.createElement("p");
+      empty.className = "knowledge-notice";
+      empty.textContent = "No references saved yet.";
+      list.append(empty);
+      return;
+    }
+    for (const item of result.knowledge) {
+      const row = document.createElement("div");
+      row.className = "knowledge-row";
+      const details = document.createElement("div");
+      details.className = "knowledge-details";
+      const link = document.createElement("a");
+      link.href = item.source_url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = item.title;
+      const source = document.createElement("small");
+      source.textContent = item.source_name + " · Saved reference";
+      details.append(link, source);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "knowledge-remove";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", async () => {
+        remove.disabled = true;
+        try { await api("/api/knowledge/" + encodeURIComponent(item.id), { method: "DELETE" }); await refresh(); }
+        catch (error) { notice.textContent = (error as Error).message; remove.disabled = false; }
+      });
+      row.append(details, remove);
+      list.append(row);
+    }
+  };
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    acquire.disabled = true;
+    acquire.textContent = "Acquiring…";
+    notice.textContent = "Searching Wikipedia and validating usable page extracts…";
+    try {
+      const result = await api<{ count: number; acquired: Array<{ title: string }> }>("/api/knowledge", {
+        method: "POST", body: JSON.stringify({ query: input.value })
+      });
+      notice.textContent = result.count ? "Acquired " + result.count + " reference(s)." : "No suitable article extracts were found for that topic.";
+      input.value = "";
+      await refresh();
+    } catch (error) { notice.textContent = (error as Error).message; }
+    finally { acquire.disabled = false; acquire.textContent = "Acquire references"; }
   });
-  $("clear-memory").addEventListener("click", async () => {
-    if (!confirm("Delete all saved conversations from this browser?")) return;
-    const db = await openDB(); await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction("conversations", "readwrite"); tx.objectStore("conversations").clear();
-      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error);
-    }); db.close(); newChat(); ui.dialog.close(); banner("Local conversations cleared.");
-  });
+  try { await refresh(); }
+  catch (error) { notice.textContent = (error as Error).message; }
+  if (!ui.dialog.open) ui.dialog.showModal();
 }
-async function detect(): Promise<void> {
-  const nav = navigator as Navigator & { deviceMemory?: number; gpu?: { requestAdapter: () => Promise<unknown> } };
-  $("ram-value").textContent = nav.deviceMemory ? "~" + nav.deviceMemory + " GB" : "Not exposed";
-  let gpu = false; try { gpu = !!(await nav.gpu?.requestAdapter()); } catch { gpu = false; }
-  $("gpu-value").textContent = gpu ? "WebGPU available" : "CPU fallback";
-  $("gpu-sub").textContent = gpu ? "GPU adapter detected; runtime will test it." : "No adapter detected. Local WASM CPU inference is available.";
-  try { const e = await navigator.storage?.estimate?.(); $("storage-value").textContent = e?.quota ? (((e.usage || 0) / 1e9).toFixed(2) + " / " + (e.quota / 1e9).toFixed(1) + " GB") : "Not exposed"; }
-  catch { $("storage-value").textContent = "Unavailable"; }
-  $("storage-sub").textContent = "Browser-reported origin storage";
-}
-ui.load.addEventListener("click", initialize);
-ui.form.addEventListener("submit", e => { e.preventDefault(); void send(ui.prompt.value); });
-ui.prompt.addEventListener("input", () => { ui.prompt.style.height = "auto"; ui.prompt.style.height = Math.min(ui.prompt.scrollHeight, 150) + "px"; });
-ui.prompt.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ui.form.requestSubmit(); } });
+ui.authForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const accessCode = ui.accessCode.value;
+  if (!accessCode) return;
+  ui.authError.textContent = "";
+  ui.authSubmit.disabled = true;
+  try {
+    const result = await fetch("/api/auth", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accessCode }), cache: "no-store"
+    });
+    const data = await result.json() as { token?: string; error?: string };
+    if (!result.ok || !data.token) throw new Error(data.error || "Authentication failed.");
+    token = data.token;
+    sessionStorage.setItem("quantum-session", token);
+    ui.accessCode.value = "";
+    ui.gate.classList.add("hidden");
+    ui.prompt.disabled = false;
+    ui.send.disabled = false;
+    await checkHealth();
+    await loadConversations();
+    const historyResult = await api<{ conversations: Conversation[] }>("/api/conversations");
+    if (historyResult.conversations[0]) await restoreConversation(historyResult.conversations[0].id);
+  } catch (error) {
+    ui.authError.textContent = (error as Error).message;
+  } finally { ui.authSubmit.disabled = false; }
+});
+ui.form.addEventListener("submit", event => { event.preventDefault(); void send(ui.prompt.value); });
+ui.prompt.addEventListener("input", () => {
+  ui.prompt.style.height = "auto";
+});
+ui.prompt.addEventListener("keydown", event => {
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); ui.form.requestSubmit(); }
+});
 $("new-chat").addEventListener("click", newChat);
+$("open-chat").addEventListener("click", () => { renderMessages(); ui.prompt.focus(); });
+$("open-history").addEventListener("click", () => { void loadConversations().catch(e => banner((e as Error).message)); });
+$("open-knowledge").addEventListener("click", () => { void openKnowledge(); });
+$("open-system").addEventListener("click", () => {
+  void (async () => {
+    try {
+      const health = await api<{ status: string; database: string; model: string; inference: string; githubConfigured: boolean; inferenceConfigured: boolean }>("/api/health");
+      showDialog("Quantum system status", [
+        "Gateway: " + health.status,
+        "Database: " + health.database,
+        "Model: " + health.model,
+        "Inference: " + health.inference,
+        "GitHub workflow: " + (health.githubConfigured ? "configured" : "not configured"),
+        "Inference target: " + (health.inferenceConfigured ? "configured" : "not configured"),
+        "The model runs on a remote CPU runner. This device performs no model inference."
+      ]);
+    } catch (error) { showDialog("System status", [(error as Error).message]); }
+  })();
+});
+$("settings-button").addEventListener("click", () => {
+  showDialog("Quantum settings", [
+    "Model: SmolLM2-135M-Instruct (Q8_0 inference tag).",
+    "Compute: GitHub Actions standard CPU runners.",
+    "Storage: Cloud D1 conversation and task records.",
+    "Authentication: private access code with a short-lived signed session."
+  ]);
+  const signOutButton = document.createElement("button");
+  signOutButton.className = "dialog-action danger";
+  signOutButton.textContent = "Sign out";
+  signOutButton.addEventListener("click", () => { ui.dialog.close(); signOut(); });
+  ui.dialogContent.append(signOutButton);
+});
 $("dialog-close").addEventListener("click", () => ui.dialog.close());
-$("settings-button").addEventListener("click", () => dialog("Quantum settings", "<p><b>Runtime</b><br>Transformers.js · ONNX Runtime Web</p><p><b>Model</b><br>Qwen2.5 0.5B Instruct · 4-bit</p><p><b>Compute</b><br>WebGPU when supported, otherwise CPU/WASM. Inference stays in this browser.</p><p><b>Privacy</b><br>Chats are stored in this browser. Model files download from Hugging Face.</p>"));
-$("open-memory").addEventListener("click", () => void memory().catch(e => banner(e.message)));
-$("open-system").addEventListener("click", () => dialog("System monitor", "<p>Compute: <b>" + $("gpu-value").textContent + "</b></p><p>" + $("gpu-sub").textContent + "</p><p>Memory: <b>" + $("ram-value").textContent + "</b></p><p>Storage: <b>" + $("storage-value").textContent + "</b></p><p>Active backend: <b>" + backend + "</b></p><p>Browsers do not expose reliable free VRAM or temperature.</p>"));
-$("open-chat").addEventListener("click", () => { if (saved.length) { ui.welcome.classList.add("hidden"); ui.chat.classList.remove("hidden"); } else newChat(); });
-document.querySelectorAll<HTMLButtonElement>(".suggestion").forEach(button => button.addEventListener("click", () => {
-  const prompt = button.dataset.prompt || ""; if (busy) { banner("Quantum is busy. Please wait."); return; }
-  if (!ready) { pendingPrompt = prompt; initialize(); } else void send(prompt);
-}));
-void (async () => { await detect(); await restore(); try { const db = await openDB(); db.close(); } catch (e) { banner("Local storage unavailable: " + (e as Error).message); } })();
+document.querySelectorAll<HTMLButtonElement>(".suggestion").forEach(button => {
+  button.addEventListener("click", () => void send(button.dataset.prompt || ""));
+});
+if (token) {
+  ui.gate.classList.add("hidden");
+  ui.prompt.disabled = false;
+  ui.send.disabled = false;
+  void (async () => {
+    try {
+      await checkHealth();
+      await loadConversations();
+      const result = await api<{ conversations: Conversation[] }>("/api/conversations");
+      if (result.conversations[0]) await restoreConversation(result.conversations[0].id);
+    } catch { signOut(); }
+  })();
+} else {
+  ui.gate.classList.remove("hidden");
+  setStatus("Private sign-in required");
+}

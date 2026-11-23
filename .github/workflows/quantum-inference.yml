@@ -1,0 +1,150 @@
+name: Quantum inference
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: "Quantum task ID"
+        required: true
+        type: string
+      api_url:
+        description: "The Quantum Pages API origin for this inference task"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: quantum-inference-${{ inputs.task_id }}
+  cancel-in-progress: false
+jobs:
+  infer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TASK_ID: ${{ inputs.task_id }}
+      QUANTUM_API_URL: ${{ inputs.api_url }}
+      QUANTUM_INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      R2_BUCKET_NAME: quantum-ai-artifacts
+    steps:
+      - name: Validate task ID and protected callback origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TASK_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          case "$QUANTUM_API_URL" in
+            "https://quantum-ai-w3356jchooks.pages.dev"|"https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev") ;;
+            *) echo "::error::Refusing to send the internal callback secret to an unapproved origin."; exit 1 ;;
+          esac
+      - name: Check out the pinned upstream llama.cpp server
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: 19cce6919992fdffd92e0ac152caaf1e2b8f254e
+          path: llama.cpp
+      - name: Restore compiled CPU server
+        id: llama-cache
+        uses: actions/cache@v4
+        with:
+          path: llama.cpp/build/bin/llama-server
+          key: quantum-llama-server-${{ runner.os }}-19cce6919992fdffd92e0ac152caaf1e2b8f254e
+      - name: Build llama.cpp CPU inference server
+        if: steps.llama-cache.outputs.cache-hit != 'true'
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF -DLLAMA_BUILD_TESTS=OFF
+          cmake --build build --config Release --target llama-server -j2
+          test -s build/bin/llama-server
+      - name: Download and verify the active private model artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          cat > wrangler-r2.toml <<EOF
+          name = "quantum-inference"
+          account_id = "$CLOUDFLARE_ACCOUNT_ID"
+          compatibility_date = "2026-11-22"
+          EOF
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-active.json --remote --config wrangler-r2.toml
+          model_key=$(jq -r '.model // empty' /tmp/quantum-active.json)
+          model_sha=$(jq -r '.model_sha256 // empty' /tmp/quantum-active.json)
+          test -n "$model_key" && test -n "$model_sha"
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/$model_key" --file /tmp/quantum-model.gguf --remote --config wrangler-r2.toml
+          printf '%s  %s\n' "$model_sha" /tmp/quantum-model.gguf | sha256sum -c -
+          adapter_key=$(jq -r '.adapter // empty' /tmp/quantum-active.json)
+          if [ -n "$adapter_key" ]; then
+            adapter_sha=$(jq -r '.adapter_sha256 // empty' /tmp/quantum-active.json)
+            test -n "$adapter_sha"
+            npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/$adapter_key" --file /tmp/quantum-adapter.gguf --remote --config wrangler-r2.toml
+            printf '%s  %s\n' "$adapter_sha" /tmp/quantum-adapter.gguf | sha256sum -c -
+          fi
+      - name: Run CPU inference and securely return the answer
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_json=$(curl -fsS "$QUANTUM_API_URL/api/internal/tasks/$TASK_ID" -H "Authorization: Bearer $QUANTUM_INTERNAL_API_SECRET")
+          printf '%s' "$task_json" > /tmp/quantum-task.json
+          if [ -s /tmp/quantum-adapter.gguf ]; then
+            llama.cpp/build/bin/llama-server -m /tmp/quantum-model.gguf --lora /tmp/quantum-adapter.gguf -c 8192 -t 4 -tb 4 -ngl 0 --host 127.0.0.1 --port 8080 > /tmp/quantum-llama-server.log 2>&1 &
+          else
+            llama.cpp/build/bin/llama-server -m /tmp/quantum-model.gguf -c 8192 -t 4 -tb 4 -ngl 0 --host 127.0.0.1 --port 8080 > /tmp/quantum-llama-server.log 2>&1 &
+          fi
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = "1"
+          TASK_JSON_PATH=/tmp/quantum-task.json python3 - <<'PY'
+          import json, os, urllib.request
+          with open(os.environ["TASK_JSON_PATH"], encoding="utf-8") as handle:
+              task=json.load(handle)
+          payload=json.dumps({
+              "model":"smollm2-135m-instruct",
+              "messages":task["messages"],
+              "max_tokens":256,
+              "temperature":0.7,
+              "top_p":0.9,
+              "stream":False
+          }).encode()
+          request=urllib.request.Request(
+              "http://127.0.0.1:8080/v1/chat/completions",
+              data=payload,
+              headers={"Content-Type":"application/json"},
+              method="POST"
+          )
+          with urllib.request.urlopen(request,timeout=1200) as response:
+              result=json.loads(response.read())
+          answer=result.get("choices",[{}])[0].get("message",{}).get("content","").strip()
+          if not answer:
+              raise SystemExit("The model returned an empty response.")
+          callback=json.dumps({"taskId":task["id"],"status":"complete","answer":answer}).encode()
+          callback_request=urllib.request.Request(
+              os.environ["QUANTUM_API_URL"] + "/api/internal/complete",
+              data=callback,
+              headers={
+                  "Content-Type":"application/json",
+                  "Authorization":"Bearer " + os.environ["QUANTUM_INTERNAL_API_SECRET"]
+              },
+              method="POST"
+          )
+          with urllib.request.urlopen(callback_request,timeout=60) as response:
+              if response.status != 200:
+                  raise SystemExit("Quantum callback did not accept the completed task.")
+          print("Inference completed and the protected callback accepted the result. Response characters:",len(answer))
+          PY
+          kill "$SERVER_PID" 2>/dev/null || true
+          trap - EXIT
+      - name: Report inference failure to Quantum
+        if: failure()
+        env:
+          ERROR_MESSAGE: "The remote CPU inference job failed. Check its private runner logs."
+        run: |
+          curl -fsS -X POST "$QUANTUM_API_URL/api/internal/complete" \
+            -H "Authorization: Bearer $QUANTUM_INTERNAL_API_SECRET" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -n --arg task "$TASK_ID" --arg error "$ERROR_MESSAGE" '{taskId:$task,status:"failed",error:$error}')" || true

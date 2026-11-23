@@ -1,0 +1,107 @@
+name: Quantum training feasibility test
+on:
+  push:
+    branches: [quantum-cloud-migration]
+    paths:
+      - ".github/workflows/quantum-training-smoke.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quantum-training-smoke
+  cancel-in-progress: true
+jobs:
+  training-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out pinned llama.cpp CPU LoRA training revision
+        uses: actions/checkout@v4
+        with:
+          repository: gianni-cor/llama.cpp
+          ref: 8544d434e0608b5e37f3620afd79026a8a438966
+          path: llama.cpp
+      - name: Build CPU training and inference binaries
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
+          cmake --build build --config Release --target llama-finetune-lora llama-finetune llama-perplexity llama-cli -j2
+      - name: Acquire the FP16 training model without Hugging Face
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve >/tmp/ollama-training.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          ollama pull smollm2:135m-instruct-fp16
+          ollama pull smollm2:135m-instruct-q8_0
+          ollama show --modelfile smollm2:135m-instruct-fp16 > /tmp/Quantum.Modelfile
+          MODEL_PATH=$(awk '/^FROM / {print $2; exit}' /tmp/Quantum.Modelfile)
+          test -s "$MODEL_PATH"
+          mkdir -p training-test
+          cp "$MODEL_PATH" training-test/smollm2-135m-instruct-f16.gguf
+          ollama show --modelfile smollm2:135m-instruct-q8_0 > /tmp/Quantum-Q8.Modelfile
+          Q8_MODEL_PATH=$(awk '/^FROM / {print $2; exit}' /tmp/Quantum-Q8.Modelfile)
+          test -s "$Q8_MODEL_PATH"
+          cp "$Q8_MODEL_PATH" training-test/smollm2-135m-instruct-q8.gguf
+      - name: Prepare synthetic training data with multiple optimizer batches
+        run: |
+          mkdir -p training-test
+          python3 - <<'PY'
+          import json
+          examples = [
+              [{"role":"user","content":"What is 2 plus 2?"},{"role":"assistant","content":"Two plus two equals four. Addition combines quantities. The answer is four."}],
+              [{"role":"user","content":"What is the capital of France?"},{"role":"assistant","content":"Paris is the capital of France. It is a major European city and the country's political center."}],
+              [{"role":"user","content":"What color is a clear daytime sky?"},{"role":"assistant","content":"A clear daytime sky usually appears blue because air molecules scatter shorter blue wavelengths more strongly."}],
+              [{"role":"user","content":"How many days are in a standard week?"},{"role":"assistant","content":"A standard week has seven days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, and Sunday."}]
+          ]
+          with open("training-test/train.jsonl", "w", encoding="utf-8") as output:
+              for _ in range(8):
+                  for messages in examples:
+                      output.write(json.dumps({"messages": messages}) + "\n")
+          sentences = [
+              "Two plus two equals four.",
+              "Paris is the capital of France.",
+              "A clear daytime sky usually appears blue.",
+              "A standard week has seven days."
+          ]
+          with open("training-test/train.txt", "w", encoding="utf-8") as output:
+              output.write("\n".join(sentences * 32))
+          print("Prepared", len(examples) * 8, "JSONL conversations and", sum(len(line.split()) for line in sentences) * 32, "plain-text training words.")
+          PY
+      - name: Run LoRA fine-tuning, checkpoint, resume, and adapter load
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          MODEL="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-f16.gguf"
+          DATA="$GITHUB_WORKSPACE/training-test/train.jsonl"
+          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --checkpoint-save-steps 1 --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints" -o "$GITHUB_WORKSPACE/training-test/adapter.gguf"
+          test -s "$GITHUB_WORKSPACE/training-test/adapter.gguf"
+          find "$GITHUB_WORKSPACE/training-test/checkpoints" -maxdepth 2 -type f -print
+          CHECKPOINT="$GITHUB_WORKSPACE/training-test/checkpoints/checkpoint_step_00000001"
+          test -d "$CHECKPOINT"
+          build/bin/llama-finetune-lora -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 --assistant-loss-only -epochs 1 -lr 0.0001 --lora-rank 8 --lora-alpha 16 --resume-from "$CHECKPOINT" --checkpoint-save-dir "$GITHUB_WORKSPACE/training-test/checkpoints-resumed" -o "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          test -s "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          build/bin/llama-perplexity -m "$MODEL" -f "$GITHUB_WORKSPACE/training-test/train.txt" -c 512 -t 4 --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf"
+          MODEL_Q8="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-q8.gguf"
+          build/bin/llama-cli -m "$MODEL_Q8" --lora "$GITHUB_WORKSPACE/training-test/adapter-resumed.gguf" -c 2048 -t 4 -n 48 --temp 0.7 --no-display-prompt -p "Reply with a short greeting." > "$GITHUB_WORKSPACE/training-test/lora-response.txt" 2> "$GITHUB_WORKSPACE/training-test/lora-cli.log"
+          python3 - <<'PY'
+          from pathlib import Path
+          answer=Path("training-test/lora-response.txt").read_text(encoding="utf-8").strip()
+          if not answer:
+              raise SystemExit("LoRA-enabled llama.cpp CLI returned an empty response")
+          print("PASS: llama.cpp CLI loaded the trained GGUF adapter on the Q8 inference model and generated text.")
+          print(answer[:500])
+          PY
+      - name: Attempt full fine-tuning on the same FP16 SmolLM2 checkpoint
+        working-directory: llama.cpp
+        run: |
+          set -euo pipefail
+          MODEL="$GITHUB_WORKSPACE/training-test/smollm2-135m-instruct-f16.gguf"
+          DATA="$GITHUB_WORKSPACE/training-test/train.txt"
+          build/bin/llama-finetune -m "$MODEL" -f "$DATA" -c 512 -b 512 -ub 512 -t 4 -tb 4 -epochs 1 -lr 0.00001 -o "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"
+          test -s "$GITHUB_WORKSPACE/training-test/full-finetuned.gguf"

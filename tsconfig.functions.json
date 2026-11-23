@@ -3,10 +3,11 @@
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "WebWorker"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "noEmitOnError": true
   },
-  "include": ["src/engine.worker.ts"]
+  "include": ["functions/**/*.ts"]
 }

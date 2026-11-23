@@ -1,46 +1,85 @@
-# Quantum
+# Quantum AI
 
-Quantum is a local-first AI website hosted on GitHub Pages. Its language model runs in the user's browser; the site does not use a hosted chat-inference API.
+Quantum is a cloud-connected AI application. The browser is a lightweight interface; model inference runs in GitHub Actions on standard hosted CPU runners.
 
-## Current runtime
+## Current implementation
 
-- TypeScript application source: `src/app.ts`.
-- TypeScript inference worker: `src/engine.worker.ts`.
-- GitHub Actions compiles both TypeScript files to browser JavaScript when source files change.
-- Transformers.js 3.8.1 + ONNX Runtime Web.
-- Model: `onnx-community/Qwen2.5-0.5B-Instruct`, using 4-bit quantization.
-- WebGPU is attempted when a compatible adapter exists; otherwise inference uses CPU through WebAssembly (WASM).
-- The inference worker keeps model execution off the main UI thread.
-- IndexedDB stores conversations on this browser origin. The Local memory panel can export or clear saved conversations.
+- **Model:** SmolLM2-135M-Instruct, acquired from the Ollama registry tag `smollm2:135m-instruct-q8_0`. The bootstrap verifies the pinned Ollama manifest digest `2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9`, then records the GGUF SHA-256 in the private R2 manifest; each inference job verifies that SHA-256 before loading the model.
+- **Inference:** A dedicated GitHub Actions workflow downloads the active GGUF model and optional LoRA adapter from private Cloudflare R2, verifies SHA-256 checksums, starts a pinned CPU `llama.cpp` server, generates a response, and sends the result back through the protected Cloudflare Pages API.
+- **Gateway:** Cloudflare Pages Functions provide same-origin API routes. A repository-scoped GitHub App installation token is generated server-side and never exposed to the browser.
+- **Authentication:** A private access code is exchanged for a seven-day HMAC-signed session. Access and signing secrets stay server-side.
+- **Storage:** Cloudflare D1 stores conversations, task state, the knowledge library, and sign-in/acquisition rate-limit records.
+- **Knowledge acquisition:** Chat automatically searches Wikipedia when no relevant saved reference exists. The Knowledge Library also supports manual topic acquisition and removal. Retrieved extracts are passed to the model as untrusted secondary reference context; the model is instructed to cite them as `[Source N]`. This is retrieval (RAG), **not** fine-tuning.
+- **Device requirements:** The tablet does not download the model, perform inference, or run training.
 
-## Build
+No Hugging Face account, token, repository, or runtime dependency is used.
 
-The repository includes separate TypeScript configurations because the main app uses browser DOM types and the worker uses Web Worker types:
+## Cloudflare deployment bootstrap
+
+A deployment workflow is included so you do not have to create the Pages project or databases manually. Add the following **GitHub Actions repository secrets** once. A guarded commit containing `[quantum-preview]` on `quantum-cloud-migration` triggers the isolated preview deployment and complete acceptance test; ordinary branch pushes do not deploy. After preview passes, merge the pull request and run **Actions → Bootstrap and deploy Quantum on Cloudflare** from `main` for production.
+
+| GitHub Actions secret | Purpose |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with account-level D1 Write, Pages Write, and Workers R2 Storage Read + Write permissions |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
+| `APP_ACCESS_CODE` | Private website sign-in code (at least 20 characters) |
+| `SESSION_SECRET` | Random secret of at least 32 characters |
+| `INTERNAL_API_SECRET` | Random secret of at least 32 characters |
+| `GITHUB_APP_ID` | Numeric GitHub App ID |
+| `GITHUB_INSTALLATION_ID` | Installation ID for the app installed on this repository |
+| `GITHUB_APP_PRIVATE_KEY` | Full PEM private key for the GitHub App |
+
+Create a GitHub App and install it **only** on `w3356jchooks-cloud/Quantum-AI`. Grant it **Actions: Read and write**; GitHub provides Metadata read access. The gateway mints short-lived installation tokens scoped to this repository and permission.
+
+The workflow then:
+1. Creates or reuses separate production and preview Cloudflare D1 databases.
+2. Creates or reuses the Cloudflare Pages project `quantum-ai-w3356jchooks`.
+3. Binds D1 as `DB` and applies `schema.sql` to both environments.
+4. Creates or reuses a private R2 bucket, mirrors the digest-pinned Q8 inference and FP16 training models, and verifies a private R2 read-after-write checksum.
+5. Uploads environment-specific application and inference-routing secrets to Cloudflare Pages.
+6. Builds and deploys the website and Pages Functions to the selected branch.
+7. Checks the deployed health endpoint, including the matching inference workflow target.
+8. Runs the complete automated acceptance test against that deployment.
+
+Before preview inference can be dispatched, merge the separate registration-only [PR #3](https://github.com/w3356jchooks-cloud/Quantum-AI/pull/3). It adds an inert default-branch workflow stub required by GitHub; the actual inference implementation still runs from the selected `quantum-cloud-migration` branch. The stub does not deploy the site, access secrets, or run a model.
+
+The production origin is `https://quantum-ai-w3356jchooks.pages.dev`; the preview branch alias is `https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev`. The workflow can deploy only `main` or `quantum-cloud-migration`. Preview uses its own D1 database and preview-only Pages secrets; both environments share the private R2 model artifacts. After either deployment, the **Quantum end-to-end acceptance test** runs automatically. It signs in, acquires a reference, dispatches the matching branch's real model workflow, waits for the SmolLM2 response, and verifies the callback, saved conversation, and source links. This is the single integrated acceptance test; no separate manual test sequence is intended.
+
+## Build, type-check, and tests
 
 ```bash
-tsc -p tsconfig.app.json
-tsc -p tsconfig.worker.json
+npm install
+npm run typecheck
+npm test
+npm run build
 ```
 
-GitHub Actions runs these commands and commits the generated `src/app.js` and `src/engine.worker.js` files for GitHub Pages.
+Cloudflare Pages assets are assembled in `dist/`. Pages Functions are loaded from the repository's `functions/` directory. The `_headers` file applies a restrictive Content Security Policy and standard security headers.
 
-## Device and download notes
+## API routes
 
-The first model load downloads model files from Hugging Face. It may take time and storage. CPU/WASM makes the app compatible with browsers that lack WebGPU, but generation can be slow on lower-powered tablets. Keep the tab open during initialization and generation. Browser caching and storage persistence depend on the browser's policies.
+- `POST /api/auth` — exchange the private access code for a signed session.
+- `GET /api/health` — non-sensitive deployment readiness.
+- `POST /api/chat` — save a conversation, retrieve/acquire relevant knowledge, and dispatch a real inference job.
+- `GET /api/tasks/:id` — poll a task's actual state.
+- `GET /api/conversations` and `GET /api/conversations/:id` — restore cloud conversation history.
+- `GET /api/knowledge`, `POST /api/knowledge`, `DELETE /api/knowledge/:id` — manage saved Wikipedia references.
+- `GET /api/internal/tasks/:id` and `POST /api/internal/complete` — internal workflow callbacks protected by the shared secret.
 
-## Honest limitations
+## Remaining work and validation gates
 
-- **No fine-tuning yet.** Running inference and storing conversations do not update model weights. Genuine fine-tuning is not implemented.
-- **No automatic web knowledge acquisition yet.** A static browser app cannot reliably crawl arbitrary websites because of cross-origin restrictions, source permissions and licensing.
-- **No background training while the tab is closed.** Browsers can suspend or terminate workers.
-- **No reliable VRAM or temperature readings.** Standard browser APIs do not expose total/free VRAM or device temperature.
+The remote chat path, secure gateway, authentication, conversation storage, initial Wikipedia retrieval, and deployment bootstrap are implemented in this branch.
 
-## Deploy
+**Not yet production-validated:** LoRA fine-tuning, full fine-tuning, and checkpoint resume on the selected model. Durable R2 checkpoint handoff, training evaluation, automatic model promotion, and broad multi-source acquisition are not implemented yet. The base Q8 inference model and FP16 training model are mirrored to private R2. A CPU LoRA feasibility experiment is running; no training feature will be exposed as working until the corrected test proves it.
 
-Enable GitHub Pages in repository Settings → Pages and select `main` / `(root)`.
+The bootstrap workflow mirrors the Q8 inference model and FP16 training model into a private R2 bucket and records SHA-256 checksums plus the Ollama manifest digests. Each inference job reads the active model manifest from R2 and verifies the downloaded model checksum before loading it. GitHub runner queue time and cold-start time depend on GitHub availability.
 
-Site: https://w3356jchooks-cloud.github.io/Quantum-AI/
+## Security notes
 
-## Privacy
-
-Chat messages are passed to the local model in the browser worker and stored in IndexedDB for this site. Model files are downloaded from Hugging Face. Google Fonts are loaded from Google Fonts. No remote chat API is configured.
+- The public repository contains source code only; no credentials or model checkpoints are committed.
+- The browser receives only a short-lived signed session token held in session storage.
+- The GitHub App private key and internal callback secret stay in server-side secrets.
+- The internal task and completion routes require the shared secret.
+- API bodies are size-bounded; failed sign-in attempts are rate-limited using a hashed client IP.
+- Retrieved Wikipedia text is treated as untrusted data, not as instructions.
+- Do not merge to production or ask for user acceptance testing until the Cloudflare bootstrap, actual GitHub Actions inference dispatch, real model response, knowledge retrieval, security checks, and recovery checks all pass.

@@ -1,0 +1,201 @@
+name: Bootstrap and deploy Quantum on Cloudflare
+on:
+  push:
+    branches: [quantum-cloud-migration]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') || (github.ref == 'refs/heads/quantum-cloud-migration' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[quantum-preview]'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      APP_ACCESS_CODE: ${{ secrets.APP_ACCESS_CODE }}
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
+      GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+      GITHUB_INSTALLATION_ID: ${{ secrets.GITHUB_INSTALLATION_ID }}
+      GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+      PROJECT_NAME: quantum-ai-w3356jchooks
+      DATABASE_NAME: quantum-ai
+      PREVIEW_DATABASE_NAME: quantum-ai-preview
+      R2_BUCKET_NAME: quantum-ai-artifacts
+      DEPLOY_BRANCH: ${{ github.ref_name }}
+      DEPLOY_ENV: ${{ github.ref == 'refs/heads/main' && 'production' || 'preview' }}
+      DEPLOY_URL: ${{ github.ref == 'refs/heads/main' && 'https://quantum-ai-w3356jchooks.pages.dev' || 'https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev' }}
+      INFERENCE_WORKFLOW_REF: ${{ github.ref_name }}
+      INFERENCE_API_URL: ${{ github.ref == 'refs/heads/main' && 'https://quantum-ai-w3356jchooks.pages.dev' || 'https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev' }}
+    steps:
+      - name: Check out Quantum
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate required one-time credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then echo "::error::Missing GitHub Actions secret: $name"; exit 1; fi
+          done
+          test "${#APP_ACCESS_CODE}" -ge 20
+          test "${#SESSION_SECRET}" -ge 32
+          test "${#INTERNAL_API_SECRET}" -ge 32
+      - name: Install dependencies and build Pages assets
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Find or create Cloudflare D1 database
+        id: d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database")
+          database_id=$(jq -r --arg name "$DATABASE_NAME" '.result[]? | select(.name == $name) | .uuid' <<<"$response" | head -n1)
+          if [ -z "$database_id" ]; then
+            created=$(curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database" --data "$(jq -n --arg name "$DATABASE_NAME" '{name:$name}')")
+            database_id=$(jq -r '.result.uuid // empty' <<<"$created")
+          fi
+          test -n "$database_id"
+          echo "database_id=$database_id" >> "$GITHUB_OUTPUT"
+      - name: Find or create preview D1 database
+        id: preview_d1
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database")
+          database_id=$(jq -r --arg name "$PREVIEW_DATABASE_NAME" '.result[]? | select(.name == $name) | .uuid' <<<"$response" | head -n1)
+          if [ -z "$database_id" ]; then
+            created=$(curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database" --data "$(jq -n --arg name "$PREVIEW_DATABASE_NAME" '{name:$name}')")
+            database_id=$(jq -r '.result.uuid // empty' <<<"$created")
+          fi
+          test -n "$database_id"
+          echo "database_id=$database_id" >> "$GITHUB_OUTPUT"
+      - name: Find or create private R2 artifact bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets?name_contains=$R2_BUCKET_NAME")
+          exists=$(jq -r --arg name "$R2_BUCKET_NAME" '[.result.buckets[]? | select(.name == $name)] | length' <<<"$response")
+          if [ "$exists" = "0" ]; then
+            curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets" \
+              --data "$(jq -n --arg name "$R2_BUCKET_NAME" '{name:$name,locationHint:"apac"}')" >/dev/null
+          fi
+      - name: Find or create Cloudflare Pages project
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json")
+          response=$(curl -fsS "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects")
+          exists=$(jq -r --arg name "$PROJECT_NAME" '[.result[]? | select(.name == $name)] | length' <<<"$response")
+          if [ "$exists" = "0" ]; then
+            curl -fsS -X POST "${headers[@]}" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
+              --data "$(jq -n --arg name "$PROJECT_NAME" '{name:$name,production_branch:"main"}')" >/dev/null
+          fi
+      - name: Bind production and preview D1/R2 resources and apply schemas
+        env:
+          D1_DATABASE_ID: ${{ steps.d1.outputs.database_id }}
+          PREVIEW_D1_DATABASE_ID: ${{ steps.preview_d1.outputs.database_id }}
+        run: |
+          cat > wrangler.toml <<EOF
+          name = "$PROJECT_NAME"
+          account_id = "$CLOUDFLARE_ACCOUNT_ID"
+          compatibility_date = "2026-11-22"
+          pages_build_output_dir = "./dist"
+          [[d1_databases]]
+          binding = "DB"
+          database_name = "$DATABASE_NAME"
+          database_id = "$D1_DATABASE_ID"
+          [[r2_buckets]]
+          binding = "ARTIFACTS"
+          bucket_name = "$R2_BUCKET_NAME"
+          [env.preview]
+          [[env.preview.d1_databases]]
+          binding = "DB"
+          database_name = "$PREVIEW_DATABASE_NAME"
+          database_id = "$PREVIEW_D1_DATABASE_ID"
+          [[env.preview.r2_buckets]]
+          binding = "ARTIFACTS"
+          bucket_name = "$R2_BUCKET_NAME"
+          EOF
+          npx --yes wrangler@4 d1 execute "$DATABASE_NAME" --remote --file schema.sql --config wrangler.toml
+          npx --yes wrangler@4 d1 execute "$PREVIEW_DATABASE_NAME" --remote --file schema.sql --config wrangler.toml --env preview
+      - name: Mirror verified model artifacts into private R2
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve >/tmp/ollama-mirror.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434/api/version >/dev/null; then break; fi
+            sleep 2
+          done
+          ollama pull smollm2:135m-instruct-q8_0
+          ollama pull smollm2:135m-instruct-fp16
+          q8_digest=$(curl -fsS http://127.0.0.1:11434/api/tags | jq -r '.models[] | select(.name == "smollm2:135m-instruct-q8_0").digest')
+          expected_q8="2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9"
+          test "$q8_digest" = "$expected_q8"
+          fp16_digest=$(curl -fsS http://127.0.0.1:11434/api/tags | jq -r '.models[] | select(.name == "smollm2:135m-instruct-fp16").digest')
+          test -n "$fp16_digest"
+          ollama show --modelfile smollm2:135m-instruct-q8_0 > /tmp/quantum-q8.Modelfile
+          ollama show --modelfile smollm2:135m-instruct-fp16 > /tmp/quantum-fp16.Modelfile
+          q8_path=$(awk '/^FROM / {print $2; exit}' /tmp/quantum-q8.Modelfile)
+          fp16_path=$(awk '/^FROM / {print $2; exit}' /tmp/quantum-fp16.Modelfile)
+          test -s "$q8_path" && test -s "$fp16_path"
+          q8_sha=$(sha256sum "$q8_path" | awk '{print $1}')
+          fp16_sha=$(sha256sum "$fp16_path" | awk '{print $1}')
+          printf '%s' "$q8_sha" > /tmp/quantum-q8.sha256
+          printf '%s' "$fp16_sha" > /tmp/quantum-fp16.sha256
+          jq -n --arg q8 "$q8_sha" --arg q8digest "$q8_digest" --arg fp16 "$fp16_sha" --arg fp16digest "$fp16_digest" \
+            '{version:"smollm2-135m-instruct-base",model:"models/base/smollm2-135m-instruct-q8_0.gguf",model_sha256:$q8,model_manifest_digest:$q8digest,training_model:"models/training/smollm2-135m-instruct-fp16.gguf",training_model_sha256:$fp16,training_model_manifest_digest:$fp16digest,adapter:null}' > /tmp/quantum-active.json
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/base/smollm2-135m-instruct-q8_0.gguf" --file "$q8_path" --remote --content-type application/octet-stream --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/base/smollm2-135m-instruct-q8_0.sha256" --file /tmp/quantum-q8.sha256 --remote --content-type text/plain --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/training/smollm2-135m-instruct-fp16.gguf" --file "$fp16_path" --remote --content-type application/octet-stream --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/training/smollm2-135m-instruct-fp16.sha256" --file /tmp/quantum-fp16.sha256 --remote --content-type text/plain --config wrangler.toml
+          npx --yes wrangler@4 r2 object put "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-active.json --remote --content-type application/json --config wrangler.toml
+          echo "Mirrored Q8_0 inference and FP16 training model assets into the private R2 bucket."
+      - name: Read back and verify the private R2 inference artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/models/base/smollm2-135m-instruct-q8_0.gguf" --file /tmp/quantum-r2-readback.gguf --remote --config wrangler.toml
+          printf '%s  %s\n' "$(cat /tmp/quantum-q8.sha256)" /tmp/quantum-r2-readback.gguf | sha256sum -c -
+          npx --yes wrangler@4 r2 object get "$R2_BUCKET_NAME/models/active.json" --file /tmp/quantum-r2-active.json --remote --config wrangler.toml
+          jq -e '.model == "models/base/smollm2-135m-instruct-q8_0.gguf" and .model_sha256 != null and .training_model != null' /tmp/quantum-r2-active.json >/dev/null
+          echo "PASS: private R2 read-after-write and active model manifest verification."
+      - name: Upload environment-specific secrets to Cloudflare Pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APP_ACCESS_CODE SESSION_SECRET INTERNAL_API_SECRET GITHUB_APP_ID GITHUB_INSTALLATION_ID GITHUB_APP_PRIVATE_KEY INFERENCE_WORKFLOW_REF INFERENCE_API_URL; do
+            printf '%s' "${!name}" | npx --yes wrangler@4 pages secret put "$name" --project-name "$PROJECT_NAME" --config wrangler.toml --env "$DEPLOY_ENV"
+          done
+      - name: Deploy Quantum Pages and Functions
+        run: npx --yes wrangler@4 pages deploy dist --project-name "$PROJECT_NAME" --branch "$DEPLOY_BRANCH" --config wrangler.toml
+      - name: Verify deployed environment health endpoint
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 20); do
+            if curl -fsS "$DEPLOY_URL/api/health" | jq -e '.status == "ok" and .database == "connected" and .githubConfigured == true and .artifactsConfigured == true and .inferenceConfigured == true' >/dev/null; then
+              echo "Quantum deployment health check passed at $DEPLOY_URL."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Quantum deployment did not pass its health check at $DEPLOY_URL."
+          exit 1
+  acceptance:
+    needs: deploy
+    uses: ./.github/workflows/quantum-acceptance.yml
+    with:
+      api_url: ${{ github.ref == 'refs/heads/main' && 'https://quantum-ai-w3356jchooks.pages.dev' || 'https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev' }}
+    secrets: inherit

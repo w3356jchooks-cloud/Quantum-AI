@@ -81,6 +81,25 @@ test("GitHub App PKCS#1 key signs a JWT and dispatches only the Quantum workflow
     const permissions = JSON.parse(calls[0].init.body);
     assert.deepEqual(permissions.permissions, { actions: "write" });
     assert.deepEqual(permissions.repositories, ["Quantum-AI"]);
+    await dispatchInference({
+      GITHUB_APP_ID: "123456",
+      GITHUB_INSTALLATION_ID: "987654",
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+      INFERENCE_WORKFLOW_REF: "quantum-cloud-migration",
+      INFERENCE_API_URL: "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev"
+    }, "preview-task-456");
+    assert.equal(calls.length, 4);
+    assert.deepEqual(JSON.parse(calls[3].init.body), {
+      ref: "quantum-cloud-migration",
+      inputs: { task_id: "preview-task-456", api_url: "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev" }
+    });
+    await assert.rejects(() => dispatchInference({
+      GITHUB_APP_ID: "123456",
+      GITHUB_INSTALLATION_ID: "987654",
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+      INFERENCE_API_URL: "https://untrusted.example"
+    }, "untrusted-task"), /not an approved deployment/);
+    assert.equal(calls.length, 4);
   } finally {
     globalThis.fetch = originalFetch;
   }

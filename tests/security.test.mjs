@@ -100,6 +100,14 @@ test("GitHub App PKCS#1 key signs a JWT and dispatches only the Quantum workflow
       INFERENCE_API_URL: "https://untrusted.example"
     }, "untrusted-task"), /not an approved deployment/);
     assert.equal(calls.length, 4);
+    await assert.rejects(() => dispatchInference({
+      GITHUB_APP_ID: "123456",
+      GITHUB_INSTALLATION_ID: "987654",
+      GITHUB_APP_PRIVATE_KEY: privateKey,
+      INFERENCE_WORKFLOW_REF: "main",
+      INFERENCE_API_URL: "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev"
+    }, "mismatched-target-task"), /not an approved deployment/);
+    assert.equal(calls.length, 4);
   } finally {
     globalThis.fetch = originalFetch;
   }

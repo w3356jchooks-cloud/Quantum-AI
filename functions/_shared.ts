@@ -103,17 +103,20 @@ export async function githubInstallationToken(env: Env): Promise<string> {
   return data.token;
 }
 export async function dispatchInference(env: Env, taskId: string): Promise<void> {
+  const workflowRef = env.INFERENCE_WORKFLOW_REF || "main";
+  const apiUrl = env.INFERENCE_API_URL || "https://quantum-ai-w3356jchooks.pages.dev";
+  const allowedTargets = new Set([
+    "https://quantum-ai-w3356jchooks.pages.dev",
+    "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev"
+  ]);
+  if (!["main", "quantum-cloud-migration"].includes(workflowRef) || !allowedTargets.has(apiUrl)) {
+    throw new Error("The configured Quantum inference target is not an approved deployment.");
+  }
   const token = await githubInstallationToken(env);
   const response = await fetch("https://api.github.com/repos/w3356jchooks-cloud/Quantum-AI/actions/workflows/quantum-inference.yml/dispatches", {
     method: "POST",
     headers: { authorization: "Bearer " + token, accept: "application/vnd.github+json", "content-type": "application/json", "x-github-api-version": "2022-11-28", "user-agent": "Quantum-AI" },
-    body: JSON.stringify({
-      ref: env.INFERENCE_WORKFLOW_REF || "main",
-      inputs: {
-        task_id: taskId,
-        api_url: env.INFERENCE_API_URL || "https://quantum-ai-w3356jchooks.pages.dev"
-      }
-    })
+    body: JSON.stringify({ ref: workflowRef, inputs: { task_id: taskId, api_url: apiUrl } })
   });
   if (!response.ok) throw new Error("GitHub could not queue the inference job (" + response.status + ").");
 }

@@ -8,6 +8,7 @@ import { onRequestPost as completeTask } from "../.test-build/functions/api/inte
 import { onRequestGet as readTask } from "../.test-build/functions/api/tasks/[id].js";
 import { onRequestGet as listConversations } from "../.test-build/functions/api/conversations.js";
 import { onRequestGet as readConversation } from "../.test-build/functions/api/conversations/[id].js";
+import { onRequestGet as readHealth } from "../.test-build/functions/api/health.js";
 
 class FakeD1 {
   conversations = new Map();
@@ -158,4 +159,27 @@ test("sign-in endpoint rate-limits repeated invalid access codes",async()=>{
     env:rateEnv
   });
   assert.equal(blocked.status,429);
+});
+
+test("health readiness requires the matching production or preview inference target", async () => {
+  const production = await readHealth({ env: {
+    ...env, ARTIFACTS: {},
+    INFERENCE_WORKFLOW_REF: "main",
+    INFERENCE_API_URL: "https://quantum-ai-w3356jchooks.pages.dev"
+  } });
+  assert.equal((await production.json()).status, "ok");
+  const preview = await readHealth({ env: {
+    ...env, ARTIFACTS: {},
+    INFERENCE_WORKFLOW_REF: "quantum-cloud-migration",
+    INFERENCE_API_URL: "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev"
+  } });
+  assert.equal((await preview.json()).status, "ok");
+  const mismatch = await readHealth({ env: {
+    ...env, ARTIFACTS: {},
+    INFERENCE_WORKFLOW_REF: "main",
+    INFERENCE_API_URL: "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev"
+  } });
+  const result = await mismatch.json();
+  assert.equal(result.status, "setup_required");
+  assert.equal(result.inferenceConfigured, false);
 });

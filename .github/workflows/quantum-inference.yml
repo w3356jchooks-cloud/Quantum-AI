@@ -1,0 +1,23 @@
+name: Quantum inference
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: "Quantum task ID"
+        required: true
+        type: string
+      api_url:
+        description: "Quantum Pages callback origin"
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  registration:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Safe default-branch registration
+        run: |
+          echo "This is an inert workflow registration stub."
+          echo "The real inference implementation runs from the explicitly selected quantum-cloud-migration branch."

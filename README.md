@@ -5,7 +5,7 @@ Quantum is a cloud-connected AI application. The browser is a lightweight interf
 ## Current implementation
 
 - **Model:** SmolLM2-135M-Instruct, using the Ollama registry tag `smollm2:135m-instruct-q8_0`, pinned to manifest digest `2d470404841a51320639b2c2418c7ad8643cccbbcb88c2a242b211ae83bf46a9`. Each inference job verifies the digest before loading the model.
-- **Inference:** A dedicated GitHub Actions workflow starts Ollama, acquires the selected model, generates a response, and sends the result back to the Cloudflare Pages API.
+- **Inference:** A dedicated GitHub Actions workflow downloads the active GGUF model and optional LoRA adapter from private Cloudflare R2, verifies SHA-256 checksums, starts a pinned CPU `llama.cpp` server, generates a response, and sends the result back through the protected Cloudflare Pages API.
 - **Gateway:** Cloudflare Pages Functions provide same-origin API routes. A repository-scoped GitHub App installation token is generated server-side and never exposed to the browser.
 - **Authentication:** A private access code is exchanged for a seven-day HMAC-signed session. Access and signing secrets stay server-side.
 - **Storage:** Cloudflare D1 stores conversations, task state, the knowledge library, and sign-in/acquisition rate-limit records.
@@ -69,7 +69,7 @@ The remote chat path, secure gateway, authentication, conversation storage, init
 
 **Not yet production-validated:** LoRA fine-tuning, full fine-tuning, checkpoint handoff/resume on the selected model, training evaluation and model promotion, R2 model/checkpoint mirroring, and broad multi-source web acquisition. A CPU LoRA feasibility experiment is in progress; the first attempt hit a graph-size assertion, so no training feature will be exposed as working until a corrected run proves it. The full fine-tuning path is also still unverified.
 
-The inference workflow currently pulls the selected Ollama tag for each job. It does not yet mirror a digest-pinned model artifact into a Quantum GitHub Release or R2. GitHub runner queue time and cold-start time depend on GitHub availability.
+The bootstrap workflow mirrors the Q8 inference model and FP16 training model into a private R2 bucket and records SHA-256 checksums plus the Ollama manifest digests. Each inference job reads the active model manifest from R2 and verifies the downloaded model checksum before loading it. GitHub runner queue time and cold-start time depend on GitHub availability.
 
 ## Security notes
 

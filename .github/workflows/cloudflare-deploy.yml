@@ -9,7 +9,7 @@ jobs:
   deploy:
     if: ${{ (github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch') || (github.ref == 'refs/heads/quantum-cloud-migration' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[quantum-preview]'))) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

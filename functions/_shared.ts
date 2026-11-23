@@ -14,6 +14,8 @@ export interface Env {
   GITHUB_APP_ID: string;
   GITHUB_INSTALLATION_ID: string;
   GITHUB_APP_PRIVATE_KEY: string;
+  INFERENCE_WORKFLOW_REF?: string;
+  INFERENCE_API_URL?: string;
 }
 const encoder = new TextEncoder();
 export const SYSTEM_PROMPT = "You are Quantum, a helpful AI assistant. Be accurate, clear, and honest about uncertainty. If you do not know something, say so. Do not claim to have browsed the web or learned new facts unless a verified source was supplied.";
@@ -105,7 +107,13 @@ export async function dispatchInference(env: Env, taskId: string): Promise<void>
   const response = await fetch("https://api.github.com/repos/w3356jchooks-cloud/Quantum-AI/actions/workflows/quantum-inference.yml/dispatches", {
     method: "POST",
     headers: { authorization: "Bearer " + token, accept: "application/vnd.github+json", "content-type": "application/json", "x-github-api-version": "2022-11-28", "user-agent": "Quantum-AI" },
-    body: JSON.stringify({ ref: "main", inputs: { task_id: taskId } })
+    body: JSON.stringify({
+      ref: env.INFERENCE_WORKFLOW_REF || "main",
+      inputs: {
+        task_id: taskId,
+        api_url: env.INFERENCE_API_URL || "https://quantum-ai-w3356jchooks.pages.dev"
+      }
+    })
   });
   if (!response.ok) throw new Error("GitHub could not queue the inference job (" + response.status + ").");
 }

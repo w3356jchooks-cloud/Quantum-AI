@@ -27,6 +27,15 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       R2_BUCKET_NAME: quantum-ai-artifacts
     steps:
+      - name: Validate task ID and protected callback origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TASK_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          case "$QUANTUM_API_URL" in
+            "https://quantum-ai-w3356jchooks.pages.dev"|"https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev") ;;
+            *) echo "::error::Refusing to send the internal callback secret to an unapproved origin."; exit 1 ;;
+          esac
       - name: Check out the pinned upstream llama.cpp server
         uses: actions/checkout@v4
         with:

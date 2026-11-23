@@ -23,6 +23,14 @@ jobs:
       QUANTUM_API_URL: ${{ inputs.api_url }}
       APP_ACCESS_CODE: ${{ secrets.APP_ACCESS_CODE }}
     steps:
+      - name: Restrict acceptance target to Quantum Pages deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$QUANTUM_API_URL" in
+            "https://quantum-ai-w3356jchooks.pages.dev"|"https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev") ;;
+            *) echo "::error::Refusing to send the access code to an unapproved origin."; exit 1 ;;
+          esac
       - name: Check out Quantum acceptance tests
         uses: actions/checkout@v4
       - name: Set up Node.js

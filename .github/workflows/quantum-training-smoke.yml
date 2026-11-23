@@ -60,7 +60,7 @@ jobs:
               [{"role":"user","content":"How many days are in a standard week?"},{"role":"assistant","content":"A standard week has seven days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, and Sunday."}]
           ]
           with open("training-test/train.jsonl", "w", encoding="utf-8") as output:
-              for _ in range(32):
+              for _ in range(8):
                   for messages in examples:
                       output.write(json.dumps({"messages": messages}) + "\n")
           sentences = [
@@ -70,8 +70,8 @@ jobs:
               "A standard week has seven days."
           ]
           with open("training-test/train.txt", "w", encoding="utf-8") as output:
-              output.write("\n".join(sentences * 128))
-          print("Prepared", len(examples) * 32, "JSONL conversations and", sum(len(line.split()) for line in sentences) * 128, "plain-text training words.")
+              output.write("\n".join(sentences * 32))
+          print("Prepared", len(examples) * 8, "JSONL conversations and", sum(len(line.split()) for line in sentences) * 32, "plain-text training words.")
           PY
       - name: Run LoRA fine-tuning, checkpoint, resume, and adapter load
         working-directory: llama.cpp

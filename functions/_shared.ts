@@ -109,7 +109,10 @@ export async function dispatchInference(env: Env, taskId: string): Promise<void>
     "https://quantum-ai-w3356jchooks.pages.dev",
     "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev"
   ]);
-  if (!["main", "quantum-cloud-migration"].includes(workflowRef) || !allowedTargets.has(apiUrl)) {
+  const expectedApiUrl = workflowRef === "main"
+    ? "https://quantum-ai-w3356jchooks.pages.dev"
+    : "https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev";
+  if (!["main", "quantum-cloud-migration"].includes(workflowRef) || !allowedTargets.has(apiUrl) || apiUrl !== expectedApiUrl) {
     throw new Error("The configured Quantum inference target is not an approved deployment.");
   }
   const token = await githubInstallationToken(env);

@@ -16,7 +16,7 @@ No Hugging Face account, token, repository, or runtime dependency is used.
 
 ## Cloudflare deployment bootstrap
 
-A deployment workflow is included so you do not have to create the Pages project or D1 database manually. The one-time setup is to add the following **GitHub Actions repository secrets** to this repository, then run **Actions → Bootstrap and deploy Quantum on Cloudflare** from the `main` branch.
+A deployment workflow is included so you do not have to create the Pages project or databases manually. Add the following **GitHub Actions repository secrets** once. First run **Actions → Bootstrap and deploy Quantum on Cloudflare** from `quantum-cloud-migration` to create an isolated preview deployment and run the complete acceptance test; after it passes, merge the pull request and run the same workflow from `main` for production.
 
 | GitHub Actions secret | Purpose |
 | --- | --- |
@@ -32,15 +32,15 @@ A deployment workflow is included so you do not have to create the Pages project
 Create a GitHub App and install it **only** on `w3356jchooks-cloud/Quantum-AI`. Grant it **Actions: Read and write**; GitHub provides Metadata read access. The gateway mints short-lived installation tokens scoped to this repository and permission.
 
 The workflow then:
-1. Creates or reuses the Cloudflare D1 database.
-2. Creates or reuses the Cloudflare Pages project `quantum-ai-w3356jchooks`.
+1. Creates or reuses separate production and preview Cloudflare D1 databases.
+2. Creates or reuses the Cloudflare Pages project `quantum-ai-w3356jchooks` and its branch preview deployment.
 3. Binds D1 as `DB` and applies `schema.sql`.
 4. Uploads the private application secrets to Cloudflare Pages.
 5. Builds and deploys the website and Pages Functions.
 6. Keeps the Cloudflare API token/account ID available to GitHub Actions for private R2 artifact reads; the same workflow uses them for provisioning.
 7. Checks the deployed health endpoint.
 
-The deployed origin is `https://quantum-ai-w3356jchooks.pages.dev`. The workflow is manual and restricted to `main`; it will not deploy this draft branch. After a successful deployment, the **Quantum end-to-end acceptance test** runs automatically. It signs in, acquires a reference, dispatches the real model workflow, waits for the SmolLM2 response, and verifies the callback, saved conversation, and source links. This is the single integrated acceptance test; no separate manual test sequence is intended.
+The production origin is `https://quantum-ai-w3356jchooks.pages.dev`; the preview branch alias is `https://quantum-cloud-migration.quantum-ai-w3356jchooks.pages.dev`. The workflow can deploy only `main` or `quantum-cloud-migration`. Preview uses its own D1 database and preview-only Pages secrets; both environments share the private R2 model artifacts. After either deployment, the **Quantum end-to-end acceptance test** runs automatically. It signs in, acquires a reference, dispatches the matching branch's real model workflow, waits for the SmolLM2 response, and verifies the callback, saved conversation, and source links. This is the single integrated acceptance test; no separate manual test sequence is intended.
 
 ## Build, type-check, and tests
 
